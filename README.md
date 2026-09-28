@@ -4,8 +4,8 @@ A minimal, pay-per-use take on Wispr Flow / Typeless for **Windows and Linux**:
 hold **Ctrl + Win**, speak, release. The audio is transcribed (ElevenLabs Scribe v2 or OpenAI),
 cleaned up by a cheap LLM ("polish" pass), copied to the clipboard and pasted into the focused text field.
 
-This is a Rust port of the TypeScript/Node version, with the same features, config file, prompts, history format
-and tray menu, in a single native executable.
+This is a native Rust rewrite of the (now archived) [TypeScript/Node version](https://github.com/Hexalyse/wisprcheap-ts),
+with the same features, config file, prompts, history format and tray menu, in a single executable.
 
 - Push-to-talk, or **double-tap** the hotkey for hands-free mode (tap again to stop)
 - **Command mode** (Ctrl + Win + Alt): select text and say "make this more formal", "translate to English"...,
