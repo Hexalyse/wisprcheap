@@ -1,0 +1,8 @@
+/target
+.cache/
+.env
+config.yaml
+history.jsonl
+recordings/
+wisprcheap.log*
+

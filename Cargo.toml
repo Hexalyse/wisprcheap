@@ -1,0 +1,59 @@
+[package]
+name = "wisprcheap"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Push-to-talk dictation: hold a hotkey, speak, and the cleaned-up text is pasted where you type."
+default-run = "wisprcheap"
+
+[[bin]]
+name = "wisprcheap"
+path = "src/main.rs"
+
+# Same program built as a Windows GUI-subsystem executable: no console window
+# (used by the desktop shortcut and for the background instance).
+[[bin]]
+name = "wisprcheapw"
+path = "src/bin/wisprcheapw.rs"
+
+[dependencies]
+anyhow = "1"
+arboard = { version = "3.6", features = ["wayland-data-control"] }
+chrono = "0.4"
+cpal = "0.18"
+dirs = "7"
+dotenvy = "0.15"
+notify = "8"
+png = "0.18"
+reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "rustls", "http2", "charset", "system-proxy"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_path_to_error = "0.1"
+serde_yaml = "0.9"
+tao = "0.37"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "signal"] }
+tray-icon = "0.25"
+
+[target.'cfg(windows)'.dependencies]
+tauri-winrt-notification = "0.8"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Console",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_Controls",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_HiDpi",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+notify-rust = "4"
+rdev = "0.5"
+
+[profile.release]
+lto = "thin"
+strip = true

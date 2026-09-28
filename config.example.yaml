@@ -1,0 +1,113 @@
+# wisprcheap configuration. Copy to config.yaml and edit.
+# Every setting is optional; the values shown are the defaults.
+# Strings can reference environment variables with ${NAME}. A .env file next to this file is loaded automatically.
+# Changes are applied as soon as you save this file (or .env); no restart needed.
+
+hotkey:
+  # Hold to dictate. All keys must be held. Ctrl / Shift / Alt / Win match left or right;
+  # use CtrlRight, AltLeft, F13... for a specific key. (Win is the Super/Meta key on Linux.)
+  keys: [Ctrl, Win]
+  # Hold to speak an instruction: it rewrites the selected text ("make this more formal", "translate to English"),
+  # or writes new text at the cursor when nothing is selected. Pressing Alt during a dictation switches to it. [] disables.
+  commandKeys: [Ctrl, Win, Alt]
+  # Press to add the selected word to the dictionary below. [] disables.
+  addWordKeys: [Ctrl, Win, Shift]
+  # Double-tap the hotkey to dictate hands-free, tap it once more to stop.
+  handsFreeDoubleTap: true
+  tapMaxMs: 250
+  doubleTapWindowMs: 350
+  # Pressing any other key while holding cancels the recording, so Ctrl+Win+Left/Right/D still work normally.
+  cancelOnOtherKey: true
+
+recording:
+  device: default          # "default" follows the system default mic; or an index / part of a name (see `wisprcheap devices`)
+  minDurationMs: 300
+  tailMs: 150              # keep recording briefly after release so the last word isn't clipped
+  maxDurationSec: 600
+  silenceThresholdDb: -55  # skip API calls when nothing louder than this was recorded
+
+transcription:
+  provider: elevenlabs     # elevenlabs | openai
+  language: auto           # auto, or an ISO code such as en / fr to force one language
+  timeoutMs: 30000
+  elevenlabs:
+    apiKey: ${ELEVENLABS_API_KEY}
+    model: scribe_v2
+    keyterms: true         # send the dictionary as keyterms (+$0.05 per audio hour)
+    noVerbatim: false      # let Scribe itself remove filler words and false starts
+  openai:
+    apiKey: ${OPENAI_API_KEY}
+    baseUrl: https://api.openai.com/v1
+    model: gpt-4o-transcribe   # or gpt-4o-mini-transcribe, gpt-transcribe
+    prompt: ""                 # optional context; dictionary terms are appended automatically
+
+polish:
+  enabled: true
+  # Any OpenAI-compatible Chat Completions endpoint works, e.g.
+  #   Groq:       https://api.groq.com/openai/v1
+  #   OpenRouter: https://openrouter.ai/api/v1
+  #   Gemini:     https://generativelanguage.googleapis.com/v1beta/openai
+  #   Ollama:     http://localhost:11434/v1
+  apiKey: ${OPENAI_API_KEY}
+  baseUrl: https://api.openai.com/v1
+  model: gpt-6-luna
+  reasoningEffort: none    # set to null for models without reasoning_effort (gpt-4.1-mini, most non-OpenAI models)
+  temperature: null
+  timeoutMs: 10000         # on timeout or error the raw transcript is pasted
+  # Skip polish when the raw transcript has fewer words than this: short dictations are pasted as transcribed,
+  # about 2 s sooner. Works best with transcription.elevenlabs.noVerbatim: true (Scribe then removes fillers). 0 = always polish.
+  minWords: 0
+  instructions: |
+    Remove filler words, repeated starts, and abandoned phrases. When I correct myself, keep the final version.
+    Fix punctuation and capitalization. Preserve my meaning, wording, names, and numbers.
+
+# Names and technical terms. Sent to Scribe as keyterms (or to OpenAI as a prompt) and to the polish model.
+# soundsLike only helps the polish model fix known mishearings.
+# Add words quickly with the addWordKeys shortcut (selected text) or "Add clipboard to dictionary" in the tray.
+dictionary:
+  - Kubernetes
+  - TypeScript
+  - term: pnpm
+    soundsLike: [p n p m, pee npm]
+
+# LLM for command mode. Every unset field uses the polish settings (same provider, key and model).
+# Recommended for better rewrites and translations (~$0.003-0.005 per command, see README):
+#   model: gpt-6-sol
+#   reasoningEffort: low
+command:
+  # model: gpt-6-luna
+  # baseUrl: https://api.openai.com/v1
+  # apiKey: ${OPENAI_API_KEY}
+  # reasoningEffort: none
+  timeoutMs: 30000
+
+# Translation mode: the pairs below appear in the tray menu ("Translate dictation"). While one is selected,
+# every dictation is cleaned up and translated before pasting (the choice is remembered across restarts).
+# "from" is also sent to the transcriber as the spoken language (better accuracy); omit it to auto-detect.
+# Codes are ISO 639-1 (en, fr, de, es...). The LLM fields fall back to the polish settings, like command mode.
+translation:
+  pairs: []
+  #  - { from: fr, to: en }
+  #  - { from: en, to: fr }
+  #  - { to: en }            # any spoken language -> English
+  # model: gpt-6-sol         # a stronger model gives more natural translations
+  # reasoningEffort: low
+  timeoutMs: 15000           # on timeout or error the untranslated text is pasted (with a notification)
+
+notifications:
+  errors: true             # desktop notification when something fails; click it to open the log
+
+output:
+  paste: true              # simulate Ctrl+V into the focused app (the text is always copied to the clipboard)
+  restoreClipboard: false  # true = put the previous clipboard content back after pasting
+  trailingSpace: true      # so consecutive dictations don't run together
+
+sounds:
+  enabled: true
+  volume: 0.25
+
+history:
+  enabled: true
+  path: history.jsonl      # relative to this file
+  saveFailedAudio: true    # keep the WAV when transcription fails
+  failedAudioDir: recordings
