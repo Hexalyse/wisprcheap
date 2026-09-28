@@ -1,5 +1,5 @@
 //! wisprcheap: push-to-talk dictation. Hold a hotkey, speak, and the cleaned-up text is pasted
-//! where you type. Windows and Linux (X11), with a tray icon.
+//! where you type. Windows and Linux (X11, and Wayland through the input devices), with a tray icon.
 
 pub mod logging;
 

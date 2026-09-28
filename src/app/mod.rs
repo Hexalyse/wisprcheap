@@ -187,6 +187,10 @@ pub async fn run(
             None
         }
     };
+    if let Some(warning) = hook.as_ref().and_then(|h| h.warning()) {
+        error!("[hotkey] {warning}");
+        shared.notify_error("Keyboard setup needed", warning);
+    }
 
     let mut actor = Actor {
         recorder: Recorder::new(loaded.config.recording.device.clone()),

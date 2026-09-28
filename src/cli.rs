@@ -1,4 +1,4 @@
-//! Command line: `wisprcheap [start|run|stop|devices|stats|shortcut|sounds]`.
+//! Command line: `wisprcheap [start|run|stop|devices|stats|shortcut|sounds|wayland]`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -25,6 +25,7 @@ Commands:
   stats       Monthly cost summary from the history
   shortcut    Create a desktop shortcut (and a menu entry on Linux)
   sounds      Play every sound cue
+  wayland     Linux: check the keyboard access needed on Wayland, and show the one-time setup
   help        Show this help
 
 Options:
@@ -99,6 +100,11 @@ pub fn main(gui_binary: bool) {
         "stats" => stats(&args),
         "shortcut" => shortcut(&args),
         "sounds" => sounds(),
+        "wayland" => {
+            let (report, ok) = crate::keyboard::setup_report();
+            println!("{report}");
+            if ok { 0 } else { 1 }
+        }
         "help" => {
             println!("{USAGE}");
             0

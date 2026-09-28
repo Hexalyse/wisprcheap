@@ -36,7 +36,7 @@ Requires Rust 1.85+ (edition 2024).
 
 **Windows**: nothing else (MSVC toolchain).
 
-**Linux** (X11 session, see [Linux notes](#linux-notes)): the GTK 3, AppIndicator, ALSA, X11/XTest and xdo development packages. On Debian/Ubuntu:
+**Linux** (X11 or Wayland session, see [Linux notes](#linux-notes)): the GTK 3, AppIndicator, ALSA, X11/XTest and xdo development packages. On Debian/Ubuntu:
 
 ```sh
 sudo apt install build-essential pkg-config libgtk-3-dev libayatana-appindicator3-dev \
@@ -65,6 +65,7 @@ This produces two executables in `target/release/`:
 2. Optionally copy `config.example.yaml` to `config.yaml` and edit it. Every setting has a default, and
    **Open config.yaml** in the tray creates it from the example if it doesn't exist.
 3. Run `wisprcheap shortcut` (optional: adds a desktop shortcut, and a menu entry on Linux), then `wisprcheap start`.
+4. Linux on Wayland: run `wisprcheap wayland` and follow the [one-time setup](#wayland) it prints.
 
 **Where files live.** If a `config.yaml` sits next to the executable, that directory is used (portable mode:
 config, `.env`, history, log, and a `.cache/` folder). Otherwise:
@@ -83,6 +84,7 @@ config, `.env`, history, log, and a `.cache/` folder). Otherwise:
 | `wisprcheap stop`     | Quit the running instance                                            |
 | `wisprcheap run`      | Run in the current terminal instead (Ctrl+C quits), still with the tray icon (`--no-tray` without) |
 | `wisprcheap shortcut` | Create or update the desktop shortcut                                |
+| `wisprcheap wayland`  | Linux: check the keyboard access needed on Wayland and print the [setup](#wayland) |
 | `wisprcheap devices`  | List microphones (for `recording.device`) and speakers              |
 | `wisprcheap stats`    | Words, audio minutes and estimated cost per month                    |
 | `wisprcheap sounds`   | Play every sound cue                                                 |
@@ -189,18 +191,72 @@ Command mode is billed per command: about $0.0002 with gpt-6-luna, $0.003-0.005 
   the same one the TypeScript version uses, so only one of the two runs at a time) and a Unix socket in
   `$XDG_RUNTIME_DIR` on Linux.
 - `cargo test` runs the unit tests (config, dictionary editing, prompts, pricing, audio, the hotkey state machine).
+  On Linux, `cargo test -- --ignored virtual_keyboards` also tests reading and typing through virtual keyboards
+  (needs access to `/dev/uinput`, e.g. as root).
   `WISPRCHEAP_NO_INJECT=1` never sends Ctrl+C / Ctrl+V, and `WISPRCHEAP_INSTANCE=<name>` runs a separate instance,
   which is useful for manual end-to-end tests next to a real instance.
 
 ### Linux notes
 
-- Global hotkeys and key injection use X11 (XRecord / XTest), like the original libuiohook. They work in X11 sessions,
-  and on Wayland only while an XWayland window has focus. Native Wayland apps don't expose global keys.
+- On X11, global hotkeys and key injection use XRecord / XTest, like the original libuiohook. No setup needed.
+- On Wayland, see [below](#wayland).
 - The tray uses AppIndicator / StatusNotifierItem. GNOME needs the "AppIndicator and KStatusNotifierItem Support" extension.
   AppIndicators don't report left clicks: use **Show log** in the menu. Notifications go through D-Bus
   (`org.freedesktop.Notifications`).
 - Without a display, the app runs without the tray icon and logs why.
-- The clipboard works on X11 and Wayland (wlr data-control).
+- The clipboard works on X11 and Wayland (data-control protocol, with XWayland's clipboard as the fallback).
+
+### Wayland
+
+Wayland doesn't let apps see global keys or type into other windows. So on Wayland, wisprcheap reads the keyboards
+directly from `/dev/input` (without blocking them: keys still reach the focused app), and types Ctrl+V / Ctrl+C through
+a virtual keyboard (`/dev/uinput`), which the compositor treats like a real one. This works in every app, on every
+compositor (GNOME, KDE, Sway, Hyprland...). The same approach is used by `ydotool`, `keyd` and `espanso`.
+
+It needs a one-time setup to give your user access to those devices. `wisprcheap wayland` checks the access and prints
+these commands. Pick one option:
+
+**Option 1 (recommended): a udev rule.** Only the user sitting at the computer (the active local session) gets access,
+and there's nothing to log out of:
+
+```sh
+sudo tee /etc/udev/rules.d/70-wisprcheap.rules <<'EOF'
+SUBSYSTEM=="input", ENV{ID_INPUT_KEYBOARD}=="1", TAG+="uaccess"
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"
+EOF
+echo uinput | sudo tee /etc/modules-load.d/wisprcheap.conf
+sudo modprobe uinput
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+**Option 2: the `input` group.** Simpler, but the access applies to all your sessions (SSH too), and it only takes
+effect after logging out and back in:
+
+```sh
+sudo usermod -aG input "$USER"
+sudo tee /etc/udev/rules.d/70-wisprcheap.rules <<'EOF'
+KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
+EOF
+echo uinput | sudo tee /etc/modules-load.d/wisprcheap.conf
+sudo modprobe uinput
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+Then restart wisprcheap (tray > **Restart**). The log says `Reading N keyboard(s) from /dev/input, typing through a
+virtual keyboard`. To undo it, delete `/etc/udev/rules.d/70-wisprcheap.rules` and `/etc/modules-load.d/wisprcheap.conf`
+(and `sudo gpasswd -d "$USER" input` for option 2).
+
+Good to know:
+
+- **Security**: this lets any program running as your user read keystrokes (including passwords) and type keys.
+  X11 always allowed that; Wayland is designed to prevent it.
+- Without the setup, wisprcheap falls back to X11 through XWayland: the hotkeys and pasting then only work while an
+  X11 app has focus. It says so in the log and in a notification.
+- Ctrl+V / Ctrl+C are sent as the keys at the V and C positions of a QWERTY keyboard, which the compositor translates
+  with your layout. That's the right letter on QWERTY, AZERTY, QWERTZ and Colemak, but not on Dvorak.
+- Keyboards plugged in while wisprcheap runs are picked up automatically.
+- `WISPRCHEAP_KEYBOARD=x11` forces the X11 method, and `WISPRCHEAP_KEYBOARD=evdev` forces the input devices
+  (on X11 too).
 
 ## License
 

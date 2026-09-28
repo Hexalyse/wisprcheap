@@ -68,6 +68,10 @@ impl Hook {
             PostThreadMessageW(self.thread_id, WM_QUIT, 0, 0);
         }
     }
+
+    pub fn warning(&self) -> Option<&str> {
+        None
+    }
 }
 
 unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
