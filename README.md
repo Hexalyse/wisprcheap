@@ -21,6 +21,15 @@ with the same features, config file, prompts, history format and tray menu, in a
 - Follows the default microphone and speakers (plug in a headset, it's used from the next dictation)
 - No settings UI: one YAML file, applied as soon as you save it
 
+## Download
+
+Prebuilt binaries for Windows and Linux (x86_64) are on the [releases page](https://github.com/Hexalyse/wisprcheap/releases).
+Extract the archive anywhere, then follow [Setup](#setup). On Linux, install the runtime libraries first
+(Debian/Ubuntu: `sudo apt install libgtk-3-0 libayatana-appindicator3-1 libasound2 libxdo3`).
+
+Windows SmartScreen may warn about an unrecognized app the first time, because the executables aren't code-signed
+(**More info** > **Run anyway**).
+
 ## Build
 
 Requires Rust 1.85+ (edition 2024).
