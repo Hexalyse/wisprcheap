@@ -469,10 +469,11 @@ sync:
   - device name; "Change passphrase"; "Disconnect this device" (revokes the token, keeps the local data).
 - **Storage**: token and data key in `SecretStore` (Keystore-encrypted); cursor, snapshot hashes and
   outbox in private files.
-- **Scheduling**:
-  - WorkManager periodic work (15 min, network required);
-  - an immediate one-off sync a few seconds after a settings change or a new history entry;
-  - a sync at app start.
+- **Scheduling** (no periodic background work):
+  - when the app's main screen opens (at most once a minute);
+  - a few seconds after a settings change or a new history entry (a dictation), which also pulls
+    the other devices' changes;
+  - "Sync now", and retries with backoff while the process lives.
 - **Mapping**: `Settings` / `ApiKeys` ↔ records (section 2), with `LlmOverride` ↔ tri-state, and
   `ApiKeys.polish` `""` ↔ fallback.
 - **History**: `id` and `device` added to `HistoryEntry` (+ JSONL). Home's "This month" gets an
@@ -549,7 +550,7 @@ sync:
 | S1 | Server core | DB and migrations, admin CLI and setup token, users, sessions, invites, pairing, tokens, `/v1` API, statistics, audit log | Integration and isolation suites green |
 | S2 | Web UI | Login, setup, devices (QR), account, admin, dashboard, history | A new user can be invited, log in and pair a device from the browser |
 | S3 | Desktop client | Config section, CLI, engine, YAML/.env write-back, history ids, tray status | Two desktop instances on one account converge |
-| S4 | Android client | `:core` sync + crypto port, Sync page, deep-link pairing, WorkManager, history ids, all-device totals | Phone + desktop converge (dictionary, prompts, keys, stats) |
+| S4 | Android client | `:core` sync + crypto port, Sync page, deep-link pairing, history ids, all-device totals | Phone + desktop converge (dictionary, prompts, keys, stats) |
 | S5 | Packaging | Dockerfile, compose example, systemd unit, server CI (tests, image to GHCR and binaries on `server-v*` tags), docs | `docker compose up` behind a reverse proxy works from the README |
 | S6 | Hardening | Security checklist review, backup/restore drill, 50k history entries performance check | Checklist signed off; v0.1.0 of the server released |
 
