@@ -60,7 +60,8 @@ unit.
 
 1. **Admin account.** Open the setup link printed in the log at the first start (it works once), or
    run `wisprcheap-server admin create <username>`. In Docker, that's
-   `docker compose exec wisprcheap wisprcheap-server admin create <name>`.
+   `docker compose exec wisprcheap wisprcheap-server admin create <name>`. To rename an account later
+   (devices and data are kept): `wisprcheap-server admin rename <username> <new-username>`.
 2. **Your devices.** Devices → **Add a device** shows a QR code and a one-time code, valid 10 minutes.
    - **Android:** scan the QR code with the camera, or WisprCheap → Settings → Sync.
    - **Desktop:** `wisprcheap sync pair https://sync.example.com CODE`.

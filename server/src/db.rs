@@ -188,6 +188,20 @@ pub fn user_by_id(conn: &Connection, id: &str) -> Result<Option<User>> {
     Ok(conn.query_row(&format!("SELECT {USER_COLS} FROM users WHERE id = ?1"), [id], user_from_row).optional()?)
 }
 
+/// Renames an account (`old` matched without case). Everything else refers to the user id, so
+/// devices, sessions and the encrypted data are unaffected. Returns the user id.
+pub fn rename_user(conn: &Connection, old: &str, new: &str) -> Result<String> {
+    crate::auth::check_username(new).map_err(anyhow::Error::msg)?;
+    let Some(user) = user_by_name(conn, old)? else {
+        anyhow::bail!("no user named {old}");
+    };
+    if user_by_name(conn, new)?.is_some_and(|other| other.id != user.id) {
+        anyhow::bail!("the username {new} is taken");
+    }
+    conn.execute("UPDATE users SET username = ?2 WHERE id = ?1", params![user.id, new])?;
+    Ok(user.id)
+}
+
 pub fn list_users(conn: &Connection) -> Result<Vec<(User, i64)>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT {USER_COLS}, (SELECT COUNT(*) FROM devices d WHERE d.user_id = users.id AND d.revoked_at IS NULL) \

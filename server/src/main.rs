@@ -41,6 +41,8 @@ enum AdminCommand {
         #[arg(long)]
         password_stdin: bool,
     },
+    /// Rename an account (its devices, sessions and data are kept).
+    Rename { username: String, new_username: String },
 }
 
 fn main() -> Result<()> {
@@ -55,8 +57,18 @@ fn main() -> Result<()> {
     match cli.command.unwrap_or(Command::Serve) {
         Command::Serve => serve(config),
         Command::Admin { command: AdminCommand::Create { username, password_stdin } } => create_admin(&config, &username, password_stdin),
+        Command::Admin { command: AdminCommand::Rename { username, new_username } } => rename_user(&config, &username, &new_username),
         Command::Backup { dir } => backup(&config, dir),
     }
+}
+
+fn rename_user(config: &Config, username: &str, new_username: &str) -> Result<()> {
+    let database = Db::open(&config.db_path())?;
+    let conn = database.lock();
+    let id = db::rename_user(&conn, username, new_username)?;
+    db::audit(&conn, Some(&id), None, "user_renamed", Some(&format!("{username} → {new_username}")), "cli");
+    println!("{username} is now {new_username}.");
+    Ok(())
 }
 
 fn serve(config: Config) -> Result<()> {

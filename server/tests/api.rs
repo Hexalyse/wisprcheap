@@ -428,3 +428,26 @@ async fn null_origin_from_the_same_site_is_accepted() {
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn renaming_a_user_keeps_devices_and_sessions() {
+    let t = T::new();
+    let id = t.user("admin", true);
+    t.user("bob", false);
+    let token = t.pair(&id, "Phone").await;
+    let cookie = t.login("admin").await;
+    {
+        let conn = t.state.db.lock();
+        assert!(db::rename_user(&conn, "admin", "bob").is_err(), "taken");
+        assert!(db::rename_user(&conn, "admin", "no spaces").is_err(), "invalid");
+        assert!(db::rename_user(&conn, "nobody", "x1").is_err(), "unknown");
+        assert_eq!(db::rename_user(&conn, "ADMIN", "Hexalyse").unwrap(), id);
+    }
+    let (status, me) = t.api("GET", "/v1/me", &token, None).await;
+    assert_eq!((status, me["user"]["username"].as_str()), (StatusCode::OK, Some("Hexalyse")));
+    let (status, html) = t.page("/devices", &cookie).await;
+    assert!(status == StatusCode::OK && html.contains("Hexalyse"));
+    t.login("hexalyse").await;
+    let (status, _, _) = t.form("/login", None, true, &[("username", "admin"), ("password", "a long enough password")]).await;
+    assert_ne!(status, StatusCode::SEE_OTHER);
+}
