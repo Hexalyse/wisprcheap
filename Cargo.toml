@@ -31,6 +31,7 @@ dotenvy = "0.15"
 notify = "8"
 png = "0.18"
 reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "rustls", "http2", "charset", "system-proxy"] }
+rpassword = "7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_path_to_error = "0.1"
@@ -38,7 +39,14 @@ serde_yaml = "0.9"
 tao = "0.37"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "signal"] }
 tray-icon = "0.25"
+uuid = { version = "1.26", features = ["v4", "v5"] }
 wisprcheap-sync = { path = "sync" }
+
+[dev-dependencies]
+# tests/sync.rs runs the real sync server in-process.
+axum = "0.8"
+tempfile = "3"
+wisprcheap-server = { path = "server" }
 
 [target.'cfg(windows)'.dependencies]
 tauri-winrt-notification = "0.8"
@@ -64,3 +72,10 @@ rdev = "0.5"
 [profile.release]
 lto = "thin"
 strip = true
+
+# Argon2 (sync passphrase) is unbearably slow unoptimised; keep debug builds and tests usable.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3

@@ -10,6 +10,8 @@ use serde::{Deserialize, Deserializer};
 use crate::lang::{canonical_language, language_name};
 use crate::paths::paths;
 
+pub use wisprcheap_sync::profile::PriceValue;
+
 pub const DEFAULT_POLISH_INSTRUCTIONS: &str = "Remove filler words, repeated starts, and abandoned phrases. When I correct myself, keep the final version. Fix punctuation and capitalization. Preserve my meaning, wording, names, and numbers.";
 
 /// Written when the user opens or edits a config that doesn't exist yet.
@@ -376,6 +378,57 @@ pub struct Config {
     pub output: OutputConfig,
     pub sounds: SoundsConfig,
     pub history: HistoryConfig,
+    pub pricing: PricingConfig,
+    pub sync: SyncConfig,
+}
+
+/// Prices of models the built-in table doesn't know (or that changed). Synced between devices.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct PricingConfig {
+    pub overrides: Vec<PriceValue>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SyncHistoryMode {
+    /// Upload this device's history entries (statistics readable by the server, text encrypted).
+    #[default]
+    Upload,
+    /// Upload, and also add the other devices' entries to history.jsonl.
+    Download,
+    /// Keep the history on this device.
+    Off,
+}
+
+impl SyncHistoryMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SyncHistoryMode::Upload => "upload",
+            SyncHistoryMode::Download => "download",
+            SyncHistoryMode::Off => "off",
+        }
+    }
+}
+
+/// Optional sync with a self-hosted wisprcheap server (`wisprcheap sync pair` writes this section).
+/// Never synced itself.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SyncConfig {
+    pub server: String,
+    /// Device token (`wcs_…`).
+    pub token: String,
+    /// This device's copy of the data key (`wck_…`), never sent to the server.
+    pub key: String,
+    pub device_name: String,
+    pub history: SyncHistoryMode,
+}
+
+impl SyncConfig {
+    pub fn enabled(&self) -> bool {
+        !self.server.trim().is_empty() && !self.token.trim().is_empty()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -413,6 +466,8 @@ pub struct LoadedConfig {
     pub config: Config,
     pub config_path: Option<PathBuf>,
     pub base_dir: PathBuf,
+    /// The .env files read, in order (later files override earlier ones).
+    pub env_files: Vec<PathBuf>,
     pub dictionary: Vec<DictionaryEntry>,
     /// Command-mode LLM with the polish fallbacks applied.
     pub command_llm: LlmOptions,
@@ -429,7 +484,7 @@ pub struct LoadedConfig {
 /// so editing .env updates them without a restart.
 static ENV_FROM_FILES: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
-fn load_env_files(files: &[PathBuf]) {
+fn read_env_files(files: &[PathBuf]) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for file in files {
         if !file.is_file() {
@@ -444,7 +499,7 @@ fn load_env_files(files: &[PathBuf]) {
             Err(e) => crate::warn!("[config] Could not read {}: {e}", file.display()),
         }
     }
-    *ENV_FROM_FILES.lock().unwrap() = Some(map);
+    map
 }
 
 /// An environment variable, from the real environment or a loaded .env file.
@@ -461,6 +516,10 @@ pub fn env_var(name: &str) -> Option<String> {
 
 /// Replace `${NAME}` occurrences (unset variables become "").
 pub fn interpolate(s: &str) -> String {
+    interpolate_with(s, &env_var)
+}
+
+fn interpolate_with(s: &str, lookup: &dyn Fn(&str) -> Option<String>) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
     while let Some(start) = rest.find("${") {
@@ -473,7 +532,7 @@ pub fn interpolate(s: &str) -> String {
             })
             .count();
         if name_len > 0 && after[name_len..].starts_with('}') {
-            out.push_str(&env_var(&after[..name_len]).unwrap_or_default());
+            out.push_str(&lookup(&after[..name_len]).unwrap_or_default());
             rest = &after[name_len + 1..];
         } else {
             out.push_str("${");
@@ -484,12 +543,14 @@ pub fn interpolate(s: &str) -> String {
     out
 }
 
-fn interpolate_value(value: &mut serde_yaml::Value) {
+fn interpolate_value(value: &mut serde_yaml::Value, lookup: &dyn Fn(&str) -> Option<String>) {
     match value {
-        serde_yaml::Value::String(s) => *s = interpolate(s),
-        serde_yaml::Value::Sequence(seq) => seq.iter_mut().for_each(interpolate_value),
-        serde_yaml::Value::Mapping(map) => map.iter_mut().for_each(|(_, v)| interpolate_value(v)),
-        serde_yaml::Value::Tagged(t) => interpolate_value(&mut t.value),
+        serde_yaml::Value::String(s) => *s = interpolate_with(s, lookup),
+        serde_yaml::Value::Sequence(seq) => seq.iter_mut().for_each(|v| interpolate_value(v, lookup)),
+        serde_yaml::Value::Mapping(map) => map
+            .iter_mut()
+            .for_each(|(_, v)| interpolate_value(v, lookup)),
+        serde_yaml::Value::Tagged(t) => interpolate_value(&mut t.value, lookup),
         _ => {}
     }
 }
@@ -507,6 +568,8 @@ fn drop_null_sections(value: &mut serde_yaml::Value) {
         "output",
         "sounds",
         "history",
+        "pricing",
+        "sync",
     ];
     let Some(map) = value.as_mapping_mut() else {
         return;
@@ -536,6 +599,8 @@ fn drop_null_sections(value: &mut serde_yaml::Value) {
 #[derive(Debug, Clone, Default)]
 pub struct ConfigArgs {
     pub config: Option<String>,
+    /// Read only the `.env` next to the config file, not the one of the app directory (tests).
+    pub isolated: bool,
 }
 
 pub fn resolve_config_path(args: &ConfigArgs) -> Result<Option<PathBuf>> {
@@ -717,12 +782,37 @@ fn validate(config: &mut Config) -> Vec<String> {
     if let Err(e) = crate::hotkey::validate(&config.hotkey) {
         issues.push(format!("✖ {e}\n  → at hotkey"));
     }
+    for (i, o) in config.pricing.overrides.iter().enumerate() {
+        let path = format!("pricing.overrides[{i}]");
+        if o.model.trim().is_empty() {
+            issues.push(format!("✖ Too small: expected string to have >=1 characters\n  → at {path}.model"));
+        }
+        for (name, v) in [
+            ("perMinute", o.per_minute),
+            ("inputPerM", o.input_per_m),
+            ("outputPerM", o.output_per_m),
+        ] {
+            if v.is_some_and(|v| !v.is_finite() || v < 0.0) {
+                issues.push(format!("✖ Expected a positive number\n  → at {path}.{name}"));
+            }
+        }
+    }
     // zod .trim() transforms.
     config.polish.instructions = config.polish.instructions.trim().to_string();
     issues
 }
 
 pub fn load_config(args: &ConfigArgs) -> Result<LoadedConfig> {
+    let (loaded, problems) = load_config_lenient(args)?;
+    if !problems.is_empty() {
+        bail!("Config problems:\n  - {}", problems.join("\n  - "));
+    }
+    Ok(loaded)
+}
+
+/// Like [`load_config`], but missing API keys and bad translation pairs are returned instead of
+/// failing (sync needs the config of a device that isn't set up yet). Invalid YAML still fails.
+pub fn load_config_lenient(args: &ConfigArgs) -> Result<(LoadedConfig, Vec<String>)> {
     let config_path = resolve_config_path(args)?;
     let base_dir = config_path
         .as_ref()
@@ -731,10 +821,11 @@ pub fn load_config(args: &ConfigArgs) -> Result<LoadedConfig> {
 
     let mut env_files = vec![base_dir.join(".env")];
     let app_env = paths().app_dir.join(".env");
-    if !env_files.contains(&app_env) {
+    if !args.isolated && !env_files.contains(&app_env) {
         env_files.push(app_env);
     }
-    load_env_files(&env_files);
+    let from_files = read_env_files(&env_files);
+    let lookup = |name: &str| std::env::var(name).ok().or_else(|| from_files.get(name).cloned());
 
     let where_ = config_path
         .as_ref()
@@ -751,7 +842,7 @@ pub fn load_config(args: &ConfigArgs) -> Result<LoadedConfig> {
     if raw.is_null() {
         raw = serde_yaml::Value::Mapping(Default::default());
     }
-    interpolate_value(&mut raw);
+    interpolate_value(&mut raw, &lookup);
     drop_null_sections(&mut raw);
 
     let mut config: Config = serde_path_to_error::deserialize(raw).map_err(|e| {
@@ -767,14 +858,16 @@ pub fn load_config(args: &ConfigArgs) -> Result<LoadedConfig> {
     // Fall back to the conventional environment variables when keys aren't set in YAML.
     let t = &mut config.transcription;
     if !has_key(&t.elevenlabs.api_key) {
-        t.elevenlabs.api_key = env_var("ELEVENLABS_API_KEY");
+        t.elevenlabs.api_key = lookup("ELEVENLABS_API_KEY");
     }
     if !has_key(&t.openai.api_key) {
-        t.openai.api_key = env_var("OPENAI_API_KEY");
+        t.openai.api_key = lookup("OPENAI_API_KEY");
     }
     if !has_key(&config.polish.api_key) {
-        config.polish.api_key = env_var("OPENAI_API_KEY");
+        config.polish.api_key = lookup("OPENAI_API_KEY");
     }
+    // Other code reads variables through `env_var`.
+    *ENV_FROM_FILES.lock().unwrap() = Some(from_files.clone());
 
     let mut problems = Vec::new();
     let t = &config.transcription;
@@ -867,9 +960,6 @@ pub fn load_config(args: &ConfigArgs) -> Result<LoadedConfig> {
                 .to_string(),
         );
     }
-    if !problems.is_empty() {
-        bail!("Config problems:\n  - {}", problems.join("\n  - "));
-    }
 
     let mut seen = HashSet::new();
     let mut dictionary = Vec::new();
@@ -889,15 +979,19 @@ pub fn load_config(args: &ConfigArgs) -> Result<LoadedConfig> {
         }
     }
 
-    Ok(LoadedConfig {
-        config,
-        config_path,
-        base_dir,
-        dictionary,
-        command_llm,
-        translation_llm,
-        translation_pairs,
-    })
+    Ok((
+        LoadedConfig {
+            config,
+            config_path,
+            base_dir,
+            env_files,
+            dictionary,
+            command_llm,
+            translation_llm,
+            translation_pairs,
+        },
+        problems,
+    ))
 }
 
 /// The config file to create/edit: the one in use, or the app's config.yaml (created from the example).
@@ -928,6 +1022,7 @@ mod tests {
         std::fs::write(&file, yaml).unwrap();
         let result = load_config(&ConfigArgs {
             config: Some(file.to_string_lossy().into_owned()),
+            isolated: true,
         });
         let _ = std::fs::remove_dir_all(&dir);
         result
@@ -1011,6 +1106,26 @@ mod tests {
     fn interpolates_env() {
         assert_eq!(interpolate("a ${WISPRCHEAP_SURELY_UNSET_VAR} b"), "a  b");
         assert_eq!(interpolate("keep ${ not} $x"), "keep ${ not} $x");
+    }
+
+    #[test]
+    fn sync_and_pricing_sections() {
+        let loaded = load_str(&format!(
+            "{KEYS}sync:\n  server: https://s\n  token: wcs_x\n  history: download\npricing:\n  overrides:\n    - {{ model: m, perMinute: 0.01 }}\n"
+        ))
+        .unwrap();
+        assert!(loaded.config.sync.enabled());
+        assert_eq!(loaded.config.sync.history, SyncHistoryMode::Download);
+        assert_eq!(loaded.config.pricing.overrides[0].per_minute, Some(0.01));
+        assert!(!load_str(KEYS).unwrap().config.sync.enabled());
+        let err = load_str(&format!("{KEYS}pricing:\n  overrides:\n    - {{ model: m, perMinute: -1 }}\n"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("pricing.overrides[0].perMinute"), "{err}");
+        let err = load_str(&format!("{KEYS}sync:\n  history: sometimes\n"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("sync.history"), "{err}");
     }
 
     #[test]

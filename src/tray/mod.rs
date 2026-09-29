@@ -32,6 +32,8 @@ pub enum UiEvent {
     FailedAvailable(bool),
     Paused(bool),
     Month(String),
+    /// Sync status line; None hides the sync items (sync off).
+    Sync(Option<String>),
     Translations(Vec<String>, i32),
     Notify(String, String),
     ShowLog,
@@ -49,6 +51,7 @@ pub enum TrayAction {
     AddClipboard,
     TogglePause,
     Translate(i32),
+    SyncNow,
     OpenConfig,
     Restart,
     Quit,
@@ -93,6 +96,10 @@ impl Ui {
 
     pub fn set_month(&self, text: &str) {
         self.send(UiEvent::Month(one_line(text)));
+    }
+
+    pub fn set_sync(&self, line: Option<String>) {
+        self.send(UiEvent::Sync(line.map(|l| one_line(&l))));
     }
 
     pub fn set_translations(&self, labels: Vec<String>, selected: i32) {
@@ -165,10 +172,14 @@ struct Tray {
     retry: MenuItem,
     pause: CheckMenuItem,
     translate: Option<(Submenu, PredefinedMenuItem, Vec<CheckMenuItem>)>,
+    /// Sync status line and "Sync now", under the month line when sync is on.
+    sync: Option<(MenuItem, MenuItem)>,
 }
 
-/// Position of the "Translate dictation" submenu in the menu.
+/// Position of the "Translate dictation" submenu in the menu (without the sync items).
 const TRANSLATE_POSITION: usize = 7;
+/// Position of the sync status line.
+const SYNC_POSITION: usize = 2;
 
 impl Tray {
     fn new(icon_dir: &std::path::Path) -> anyhow::Result<Self> {
@@ -225,7 +236,32 @@ impl Tray {
             retry,
             pause,
             translate: None,
+            sync: None,
         })
+    }
+
+    fn translate_position(&self) -> usize {
+        TRANSLATE_POSITION + if self.sync.is_some() { 2 } else { 0 }
+    }
+
+    fn set_sync(&mut self, line: Option<&str>) {
+        match (line, &self.sync) {
+            (Some(text), Some((status, _))) => status.set_text(text),
+            (Some(text), None) => {
+                let status = MenuItem::with_id("sync-status", text, false, None);
+                let now = MenuItem::with_id("sync-now", "Sync now", true, None);
+                let _ = self.menu.insert(&status, SYNC_POSITION);
+                let _ = self.menu.insert(&now, SYNC_POSITION + 1);
+                self.sync = Some((status, now));
+            }
+            (None, Some(_)) => {
+                if let Some((status, now)) = self.sync.take() {
+                    let _ = self.menu.remove(&status);
+                    let _ = self.menu.remove(&now);
+                }
+            }
+            (None, None) => {}
+        }
     }
 
     fn set_state(&mut self, name: IconName, text: &str) {
@@ -265,8 +301,9 @@ impl Tray {
             items.push(item);
         }
         let separator = PredefinedMenuItem::separator();
-        let _ = self.menu.insert(&submenu, TRANSLATE_POSITION);
-        let _ = self.menu.insert(&separator, TRANSLATE_POSITION + 1);
+        let position = self.translate_position();
+        let _ = self.menu.insert(&submenu, position);
+        let _ = self.menu.insert(&separator, position + 1);
         self.translate = Some((submenu, separator, items));
     }
 }
@@ -277,6 +314,7 @@ fn menu_action(id: &str) -> Option<TrayAction> {
         "retry-failed" => TrayAction::RetryFailed,
         "add-clipboard" => TrayAction::AddClipboard,
         "toggle-pause" => TrayAction::TogglePause,
+        "sync-now" => TrayAction::SyncNow,
         "open-config" => TrayAction::OpenConfig,
         "restart" => TrayAction::Restart,
         "quit" => TrayAction::Quit,
@@ -385,6 +423,11 @@ pub fn run(
             UiEvent::Month(text) => {
                 if let Some(t) = &tray {
                     t.month.set_text(&text);
+                }
+            }
+            UiEvent::Sync(line) => {
+                if let Some(t) = tray.as_mut() {
+                    t.set_sync(line.as_deref());
                 }
             }
             UiEvent::Translations(labels, selected) => {

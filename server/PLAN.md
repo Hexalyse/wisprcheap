@@ -333,7 +333,8 @@ meta         (key TEXT PK, value TEXT)   -- schema version, setup token hash
 2. **Push**: `POST /v1/changes` with up to 500 local changes (outbox) → per record, `applied` (with
    its new `seq`) or `stale` (with the winning record). Remove the applied ones from the outbox.
 3. **Cursor and outbox persistence**:
-   - desktop: `<cache dir>/sync/state.json` and `outbox.jsonl`;
+   - desktop: `<cache dir>/sync/state.json` (cursor, snapshot, outbox and not-yet-applied changes),
+     with a lock file so the app and the CLI never sync at the same time;
    - Android: files in the app's private storage.
 4. **When a device syncs**:
    - at startup;
@@ -415,8 +416,10 @@ sync:
   - `wisprcheap sync pair <server> <code>`: asks for the passphrase on the terminal (or reads it with
     `--passphrase-stdin`), pairs, sets up or unlocks the encryption, then writes `sync.*` into
     `config.yaml` (in place, keeping comments);
-  - `wisprcheap sync status`, `wisprcheap sync now` (through the control socket of the running
-    instance), `wisprcheap sync unpair`, `wisprcheap sync passphrase` (change it).
+  - `wisprcheap sync status`, `wisprcheap sync now` (runs in the terminal, then pokes the running
+    instance through its control socket), `wisprcheap sync unpair`, `wisprcheap sync passphrase`
+    (change it), `wisprcheap sync unlock` (enter it again after a reset elsewhere),
+    `wisprcheap sync rename <name>`.
 - **Engine**:
   - a Tokio task in the app actor;
   - triggers from 6.3 (startup, config reload, history append, 15-minute timer, `sync-now` control

@@ -54,6 +54,8 @@ pub enum AppMsg {
     },
     Quit,
     Restart,
+    /// The sync status changed: refresh the tray.
+    SyncStatus,
 }
 
 /// Instance acquired and config loaded: ready to run.
@@ -140,6 +142,19 @@ pub async fn run(
         last_text: None,
         last_failed: None,
     };
+    let sync = {
+        let tx = app_tx.clone();
+        crate::sync::SyncHandle::spawn(
+            crate::sync::SyncContext {
+                config_args: opts.config_args.clone(),
+                state_dir: crate::sync::state::default_state_dir(),
+            },
+            loaded.config.sync.enabled(),
+            move || {
+                let _ = tx.send(AppMsg::SyncStatus);
+            },
+        )
+    };
     let shared = Arc::new(Shared {
         pipeline: RwLock::new(Arc::new(Pipeline::build(&loaded))),
         status: Mutex::new(status),
@@ -149,6 +164,7 @@ pub async fn run(
         base_dir: loaded.base_dir.clone(),
         app_tx: app_tx.clone(),
         job_tx,
+        sync,
     });
     // Applies the translation check and fills the tray.
     shared.pipeline_changed();
@@ -304,6 +320,7 @@ impl Actor {
             }
             AppMsg::Quit => self.quit().await,
             AppMsg::Restart => self.restart().await,
+            AppMsg::SyncStatus => self.shared.refresh_tray(),
         }
     }
 
@@ -475,6 +492,7 @@ impl Actor {
             next.dictionary.len()
         );
         self.shared.update_status();
+        self.shared.sync.config_changed(next.config.sync.enabled());
     }
 
     fn apply_pending_reload(&mut self) {
@@ -572,6 +590,7 @@ impl Actor {
                 self.set_paused(!paused);
             }
             TrayAction::Translate(index) => self.select_translation(index),
+            TrayAction::SyncNow => self.shared.sync.sync_now(),
             TrayAction::OpenConfig => self.open_config(),
             TrayAction::Restart => self.restart().await,
             TrayAction::Quit => self.quit().await,
@@ -611,6 +630,14 @@ impl Actor {
             "add-clipboard" => {
                 let _ = self.app_tx.send(AppMsg::Tray(TrayAction::AddClipboard));
                 "ok"
+            }
+            "sync-now" => {
+                if self.shared.sync.enabled() {
+                    self.shared.sync.sync_now();
+                    "ok"
+                } else {
+                    "sync-off"
+                }
             }
             other => match other
                 .strip_prefix("translate ")
@@ -754,8 +781,19 @@ impl Actor {
         } else {
             "Press Ctrl+C to quit."
         };
+        let sc = &config.sync;
+        let sync = if sc.enabled() {
+            let name = if sc.device_name.is_empty() {
+                String::new()
+            } else {
+                format!(" as \"{}\"", sc.device_name)
+            };
+            format!("{}{name} (history: {})", sc.server, sc.history.as_str())
+        } else {
+            "off".to_string()
+        };
         say!(
-            "wisprcheap ready\n  config:     {config_line} (reloaded automatically when saved)\n  hotkeys:    {}\n  mic:        {}{follows}\n  transcribe: {} / {} (language: {})\n  polish:     {polish_info}\n  translate:  {pair_info}\n  dictionary: {} term(s)\n  history:    {history}\n{footer}",
+            "wisprcheap ready\n  config:     {config_line} (reloaded automatically when saved)\n  hotkeys:    {}\n  mic:        {}{follows}\n  transcribe: {} / {} (language: {})\n  polish:     {polish_info}\n  translate:  {pair_info}\n  dictionary: {} term(s)\n  history:    {history}\n  sync:       {sync}\n{footer}",
             shortcuts.join("\n              "),
             self.recorder.current_device_name(),
             p.transcriber.provider.as_str(),

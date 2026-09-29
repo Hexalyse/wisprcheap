@@ -108,16 +108,15 @@ impl RateLimiter {
 
 /// Client address: the socket peer, or the first `X-Forwarded-For` hop behind a trusted proxy.
 pub fn client_ip(headers: &HeaderMap, peer: Option<SocketAddr>, trust_proxy: bool) -> String {
-    if trust_proxy {
-        if let Some(first) = headers
+    if trust_proxy
+        && let Some(first) = headers
             .get("x-forwarded-for")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.split(',').next())
             .map(str::trim)
             .filter(|v| !v.is_empty())
-        {
-            return first.to_string();
-        }
+    {
+        return first.to_string();
     }
     peer.map(|p| p.ip().to_string()).unwrap_or_else(|| "unknown".into())
 }

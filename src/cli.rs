@@ -23,6 +23,7 @@ Commands:
   stop        Quit the running instance
   devices     List audio input/output devices
   stats       Monthly cost summary from the history
+  sync        Sync with a wisprcheap server (`wisprcheap sync help` for the commands)
   shortcut    Create a desktop shortcut (and a menu entry on Linux)
   sounds      Play every sound cue
   wayland     Linux: check the keyboard access needed on Wayland, and show the one-time setup
@@ -41,6 +42,8 @@ struct Args {
     gui: bool,
     /// Options to pass on to `run` (config file, --no-tray).
     passthrough: Vec<String>,
+    /// Arguments of `sync`.
+    rest: Vec<String>,
 }
 
 fn parse_args(raw: Vec<String>, gui_default: bool) -> Result<Args> {
@@ -51,9 +54,14 @@ fn parse_args(raw: Vec<String>, gui_default: bool) -> Result<Args> {
         restarted: false,
         gui: gui_default,
         passthrough: Vec::new(),
+        rest: Vec::new(),
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
+        if args.command == "sync" && !matches!(arg.as_str(), "-c" | "--config") {
+            args.rest.push(arg);
+            continue;
+        }
         match arg.as_str() {
             "-c" | "--config" => {
                 let file = it
@@ -98,6 +106,7 @@ pub fn main(gui_binary: bool) {
         "stop" => stop(),
         "devices" => devices(),
         "stats" => stats(&args),
+        "sync" => crate::sync::cli::main(&args.rest, &args.config),
         "shortcut" => shortcut(&args),
         "sounds" => sounds(),
         "wayland" => {

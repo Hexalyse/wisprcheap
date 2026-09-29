@@ -49,6 +49,12 @@ pub enum Delivered {
 #[serde(rename_all = "camelCase", default)]
 pub struct HistoryEntry {
     pub ts: String,
+    /// Unique id (UUID v4). Older entries have none (sync derives one from the device and `ts`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Sync device id of the device that recorded the entry (only when sync is set up).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
     /// "command" for command mode; absent for dictations.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
@@ -279,8 +285,10 @@ mod tests {
 
     #[test]
     fn selection_null_round_trips() {
-        let mut e = HistoryEntry::default();
-        e.selection = Some(None);
+        let e = HistoryEntry {
+            selection: Some(None),
+            ..Default::default()
+        };
         let json = serde_json::to_string(&e).unwrap();
         assert!(json.contains("\"selection\":null"));
         let back: HistoryEntry = serde_json::from_str(&json).unwrap();

@@ -111,3 +111,19 @@ history:
   path: history.jsonl      # relative to this file
   saveFailedAudio: true    # keep the WAV when transcription fails
   failedAudioDir: recordings
+
+# Prices of models the built-in table doesn't know (used for the cost estimates).
+# pricing:
+#   overrides:
+#     - { model: llama-3.3-70b-versatile, inputPerM: 0.59, outputPerM: 0.79 }   # USD per 1M tokens
+#     - { model: my-whisper, perMinute: 0.004 }                                 # USD per audio minute
+
+# Optional sync with your own wisprcheap server (see README). Set up with:
+#   wisprcheap sync pair https://sync.example.com <code>
+# which fills in this section (keep this file private: it then holds the device token and key).
+# sync:
+#   server: https://sync.example.com
+#   token: wcs_...
+#   key: wck_...             # this device's copy of the encryption key, never sent to the server
+#   deviceName: Work laptop
+#   history: upload          # upload | download (also get the other devices' entries) | off

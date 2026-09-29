@@ -103,6 +103,7 @@ The top of the menu shows the status and this month's estimated cost and word co
 - **Retry last failed** re-sends the last recording whose transcription failed (e.g. network or quota error).
   The result goes to the clipboard, since focus is on the tray at that moment.
 - **Translate dictation** (only shown when `translation.pairs` is set): pick a pair, or Off. The choice is remembered.
+- **Sync now** and the sync status line (only when [sync](#sync-optional) is set up).
 - **Add clipboard to dictionary** adds the copied word or phrase to `config.yaml`.
 - **Pause dictation** ignores the shortcuts until you resume.
 - **Open config.yaml** opens it in your default editor. Saved changes apply immediately.
@@ -177,6 +178,55 @@ List prices, September 2026. At about 140 words per minute, **10,000 words is ab
 
 Command mode is billed per command: about $0.0002 with gpt-6-luna, $0.003-0.005 with gpt-6-sol (low).
 `wisprcheap stats` shows your real numbers based on the history file, and the tray menu shows the current month's total.
+
+Models missing from the built-in price table (or with other prices) can be listed in `config.yaml`:
+
+```yaml
+pricing:
+  overrides:
+    - { model: llama-3.3-70b-versatile, inputPerM: 0.59, outputPerM: 0.79 }
+    - { model: my-whisper, perMinute: 0.004 }
+```
+
+## Sync (optional)
+
+Keep several computers and the [Android app](https://github.com/Hexalyse/wisprcheap-android) in sync through
+your own [wisprcheap sync server](server/README.md): settings, API keys, dictionary, translation pairs, price
+overrides, and the history (with totals for all your devices). Everything is **end-to-end encrypted** with a sync
+passphrase the server never sees; only the history statistics (dates, durations, models, word counts, costs) are
+readable by the server, so it can show them on its web page.
+
+1. On the server's web page, click **Connect a device**: it shows a QR code and an 8-character code.
+2. On this computer:
+
+   ```
+   wisprcheap sync pair https://sync.example.com ABCD-2345
+   ```
+
+   The first device chooses the sync passphrase; the next ones ask for it. The first sync merges this computer's
+   settings with the server's: the server's values win, local dictionary terms, pairs and prices are added, and a
+   copy of the previous file is kept (`config.yaml.bak-<date>`).
+
+Then the app syncs by itself: at startup, a few seconds after you save `config.yaml` or `.env`, after dictations,
+every 15 minutes, and from **Sync now** in the tray (which also shows the sync status). Changes from other devices
+are written into `config.yaml` (comments and layout are kept) and API keys into `.env` next to it.
+
+What's synced: transcription, cleanup (polish), command and translation settings, the five API keys, the
+dictionary, translation pairs and `pricing.overrides`. Hotkeys, microphone, sounds, output, history options and the
+`sync` section itself stay per device. `sync.history` chooses what happens to the history: `upload` (default),
+`download` (also add the other devices' entries to `history.jsonl`) or `off`.
+
+| Command                          | What it does                                                  |
+| -------------------------------- | ------------------------------------------------------------- |
+| `wisprcheap sync status`         | Server, device, last sync, connection and key check           |
+| `wisprcheap sync now`            | Sync right away and print what changed                        |
+| `wisprcheap sync passphrase`     | Change the sync passphrase (other devices keep working)       |
+| `wisprcheap sync unlock`         | Enter the passphrase again after it was reset on another device |
+| `wisprcheap sync rename <name>`  | Rename this device on the server                              |
+| `wisprcheap sync unpair`         | Disconnect this computer (local files stay as they are)       |
+
+`wisprcheap sync pair` writes the device token and this device's copy of the encryption key into the `sync`
+section of `config.yaml`: keep that file private, like `.env`.
 
 ## Notes
 

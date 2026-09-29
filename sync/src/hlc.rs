@@ -21,7 +21,8 @@ impl Hlc {
         if ms.len() != 13 || !ms.bytes().all(|b| b.is_ascii_digit()) || counter.len() != 4 || node.is_empty() {
             return None;
         }
-        if !node.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+        // Device ids are base64url: letters, digits, `_` and `-`.
+        if !node.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-') {
             return None;
         }
         Some(Hlc { ms: ms.parse().ok()?, counter: u16::from_str_radix(counter, 16).ok()?, node: node.to_string() })
@@ -102,6 +103,8 @@ mod tests {
         assert!(Hlc::parse("123-0000-dev").is_none());
         assert!(Hlc::parse("1759154400123-0000-").is_none());
         assert!(Hlc::parse("1759154400123-0000-dev a").is_none());
+        let dashed = Hlc::parse("1759154400123-0000-dev_a-b_C").unwrap();
+        assert_eq!(dashed.node, "dev_a-b_C");
     }
 
     #[test]

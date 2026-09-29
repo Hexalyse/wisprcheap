@@ -15,7 +15,7 @@ use crate::history::{
 };
 use crate::llm::is_network_error;
 use crate::output::{Selection, capture_selection, deliver, restore_clipboard};
-use crate::pricing::{llm_cost, transcription_cost};
+use crate::pricing::{llm_cost_with, transcription_cost_with};
 use crate::sounds::Cue;
 use crate::{error, info, say};
 
@@ -80,6 +80,7 @@ fn is_usable_audio(sh: &Shared, p: &Pipeline, pcm: &[i16]) -> bool {
 fn new_entry(p: &Pipeline, pcm: &[i16], started_at: chrono::DateTime<Utc>) -> HistoryEntry {
     HistoryEntry {
         ts: iso_timestamp(started_at),
+        id: Some(uuid::Uuid::new_v4().to_string()),
         duration_sec: (pcm_duration_ms(pcm.len()) / 1000.0 * 100.0).round() / 100.0,
         transcription: TranscriptionInfo {
             provider: p.transcriber.provider.as_str().to_string(),
@@ -108,7 +109,8 @@ async fn transcribe(
     };
     entry.transcription.ms = t0.elapsed().as_millis() as u64;
     entry.raw = raw.clone();
-    entry.cost_usd.transcription = transcription_cost(
+    entry.cost_usd.transcription = transcription_cost_with(
+        &p.config.pricing.overrides,
         &p.transcriber.model,
         entry.duration_sec,
         p.transcriber.keyterm_count,
@@ -218,8 +220,12 @@ pub async fn process_dictation(sh: &Arc<Shared>, pcm: Arc<Vec<i16>>, retry: bool
                 text = result.text;
                 info.input_tokens = result.input_tokens;
                 info.output_tokens = result.output_tokens;
-                entry.cost_usd.polish =
-                    llm_cost(&llm.model, result.input_tokens, result.output_tokens);
+                entry.cost_usd.polish = llm_cost_with(
+                    &p.config.pricing.overrides,
+                    &llm.model,
+                    result.input_tokens,
+                    result.output_tokens,
+                );
             }
             Err(e) => {
                 let message = e.to_string();
@@ -336,8 +342,12 @@ pub async fn process_command(sh: &Arc<Shared>, pcm: Arc<Vec<i16>>) {
         Ok(result) => {
             info.input_tokens = result.input_tokens;
             info.output_tokens = result.output_tokens;
-            entry.cost_usd.polish =
-                llm_cost(&commander.model, result.input_tokens, result.output_tokens);
+            entry.cost_usd.polish = llm_cost_with(
+                &p.config.pricing.overrides,
+                &commander.model,
+                result.input_tokens,
+                result.output_tokens,
+            );
             result.text
         }
         Err(e) => {

@@ -3776,6 +3776,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
+
+[[package]]
 name = "sha2"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4527,6 +4533,7 @@ dependencies = [
  "getrandom 0.4.3",
  "js-sys",
  "serde_core",
+ "sha1_smol",
  "wasm-bindgen",
 ]
 
@@ -5147,6 +5154,7 @@ version = "1.1.0"
 dependencies = [
  "anyhow",
  "arboard",
+ "axum",
  "chrono",
  "cpal",
  "dirs",
@@ -5158,15 +5166,19 @@ dependencies = [
  "png",
  "rdev",
  "reqwest",
+ "rpassword",
  "serde",
  "serde_json",
  "serde_path_to_error",
  "serde_yaml",
  "tao",
  "tauri-winrt-notification",
+ "tempfile",
  "tokio",
  "tray-icon",
+ "uuid",
  "windows-sys 0.61.2",
+ "wisprcheap-server",
  "wisprcheap-sync",
 ]
 

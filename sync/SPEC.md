@@ -47,7 +47,8 @@ directly) and the Android client (a Kotlin port). Every implementation must pass
 
 ## 4. Hybrid logical clock
 - Format `<ms, 13 decimal digits, zero-padded>-<counter, 4 lowercase hex digits>-<device id>`. String
-  order equals time order.
+  order equals time order. The device id is base64url, so it can contain `-` and `_`: split on the
+  first two `-` only.
 - `now(wall)`: if `wall > last.ms` → `(wall, 0)`; else `(last.ms, last.counter + 1)` (if the counter
   overflows: `(last.ms + 1, 0)`).
 - `observe(h)`: if `h > (last.ms, last.counter)` → `last = (h.ms, h.counter)`.
@@ -107,10 +108,11 @@ mode on/off) is per device and never synced.
 
 ### 5.4 Merging on the first sync of a device
 1. Pull everything.
-2. For records present on both sides, the server value wins (applied locally).
-3. Local items missing on the server are pushed:
-   - dictionary terms, pairs and prices, by blinded id;
-   - settings and secrets only if the server has no profile yet (no `setting`/`secret` record at all).
+2. For records present on both sides, the server value wins (applied locally). Two exceptions keep
+   local data: a server tombstone for an item the device has, and an empty server API key where the
+   device has one. Those local values are pushed instead.
+3. Local items missing on the server are pushed (dictionary terms, pairs and prices by blinded id;
+   settings and secrets the server doesn't have yet, e.g. the whole profile on the first device).
 
 ## 6. History statistics (clear, `stats` of `history` records)
 ```json
@@ -149,15 +151,19 @@ Limits: request bodies ≤ 1 MiB, payloads ≤ 64 KiB, 120 requests per minute p
 (`429 rate_limited`).
 
 ## 8. Client algorithm (summary)
-1. `GET /v1/me`.
-   - No keyring: create DK and push the keyring (first device).
+1. Compare the local profile with the last synced snapshot (except on the first sync). Every
+   difference becomes a change with a fresh HLC in the outbox. Doing this before any network call
+   gives offline edits an HLC close to when they were made.
+2. `GET /v1/me`.
+   - No keyring: the first device creates DK and pushes the keyring when pairing.
    - Keyring with an unknown `keyId`: ask for the passphrase, unwrap DK, store it.
-2. Pull pages from the saved cursor, decrypt, observe the HLCs, apply the values locally (without
-   echoing them back), save the cursor.
-3. Compare the local profile with the last synced snapshot. Every difference becomes a change with a
-   fresh HLC in the outbox.
-4. Push the outbox:
+3. Pull pages from the saved cursor, decrypt, observe the HLCs. A pulled record older than (or equal
+   to) the snapshot is skipped; if the outbox has a newer change of the same record, the outbox wins,
+   otherwise the pulled record replaces it. Apply the values locally in `seq` order (without echoing
+   them back), save the cursor. Values that can't be applied yet are kept and retried.
+4. Compare the local profile with the snapshot again (first sync: what the server didn't have).
+5. Push the outbox:
    - `applied` / `exists` → remove from the outbox;
    - `stale` → apply `current`;
    - `rejected` → drop, and log it.
-5. Upload new history entries (`history` records with `stats`).
+6. Upload new history entries (`history` records with `stats`).

@@ -269,11 +269,11 @@ async fn push(State(state): State<SharedState>, auth: DeviceAuth, Json(req): Jso
         }
 
         // Last writer wins, by HLC.
-        if let Some((e, _)) = &existing {
-            if Hlc::parse(&e.hlc).is_some_and(|stored| stored >= hlc) {
-                results.push(PushResult { kind: c.kind.clone(), id: c.id.clone(), status: PushStatus::Stale, seq: None, current: Some(e.clone()), error: None });
-                continue;
-            }
+        if let Some((e, _)) = &existing
+            && Hlc::parse(&e.hlc).is_some_and(|stored| stored >= hlc)
+        {
+            results.push(PushResult { kind: c.kind.clone(), id: c.id.clone(), status: PushStatus::Stale, seq: None, current: Some(e.clone()), error: None });
+            continue;
         }
         seq += 1;
         tx.execute(

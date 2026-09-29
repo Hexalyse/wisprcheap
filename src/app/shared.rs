@@ -16,6 +16,7 @@ use crate::output::SharedHotkey;
 use crate::polish::Polisher;
 use crate::sounds::{Cue, Sounds};
 use crate::state::AppState;
+use crate::sync::SyncHandle;
 use crate::transcribe::Transcriber;
 use crate::tray::Ui;
 
@@ -117,6 +118,7 @@ pub struct Shared {
     pub base_dir: PathBuf,
     pub app_tx: UnboundedSender<AppMsg>,
     pub job_tx: UnboundedSender<Job>,
+    pub sync: SyncHandle,
 }
 
 /// 1234567 -> "1,234,567"
@@ -238,15 +240,26 @@ impl Shared {
         ui.set_translations(p.pairs.iter().map(|x| x.label.clone()).collect(), selected);
         let month = p.history.current_month();
         let month_name = Local::now().format("%B");
-        let cost = if month.cost_usd < 0.01 && month.cost_usd > 0.0 {
-            "<$0.01".to_string()
-        } else {
-            format!("~${:.2}", month.cost_usd)
+        let money = |usd: f64| {
+            if usd < 0.01 && usd > 0.0 {
+                "<$0.01".to_string()
+            } else {
+                format!("~${usd:.2}")
+            }
         };
+        let sync = self.sync.status();
+        let all_devices = sync
+            .month
+            .as_ref()
+            .filter(|_| sync.devices > 1)
+            .map(|m| format!(" (all devices: {})", money(m.total_usd)))
+            .unwrap_or_default();
         ui.set_month(&format!(
-            "{month_name}: {cost} - {} words",
+            "{month_name}: {} - {} words{all_devices}",
+            money(month.cost_usd),
             thousands(month.words)
         ));
+        ui.set_sync(sync.tray_line());
     }
 
     pub fn set_last_failed(&self, value: Option<LastFailed>) {
@@ -271,8 +284,16 @@ impl Shared {
 
     /// Write the entry to the history and update the month total shown in the tray.
     pub fn record(&self, p: &Pipeline, entry: &HistoryEntry) {
-        p.history.append(entry);
+        let mut entry = entry.clone();
+        if entry.id.is_none() {
+            entry.id = Some(uuid::Uuid::new_v4().to_string());
+        }
+        if entry.device.is_none() {
+            entry.device = self.sync.device_id();
+        }
+        p.history.append(&entry);
         self.refresh_tray();
+        self.sync.history_appended();
     }
 
     pub fn finish_entry(&self, p: &Pipeline, entry: &mut HistoryEntry, text: &str) {
