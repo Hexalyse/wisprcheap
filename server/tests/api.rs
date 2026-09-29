@@ -392,4 +392,39 @@ async fn security_headers_and_health() {
     assert_eq!((status, body.as_str()), (StatusCode::OK, "ok"));
     assert!(headers.get("content-security-policy").unwrap().to_str().unwrap().contains("default-src 'self'"));
     assert_eq!(headers.get("x-frame-options").unwrap(), "DENY");
+    // Not `no-referrer`: with it, browsers send `Origin: null` on our own form POSTs.
+    assert_eq!(headers.get("referrer-policy").unwrap(), "same-origin");
+}
+
+/// What browsers really send when they hide the origin: `Origin: null` + `Sec-Fetch-Site`.
+#[tokio::test]
+async fn null_origin_from_the_same_site_is_accepted() {
+    let t = T::new();
+    let token = wisprcheap_server::web::new_setup_token(&t.state).unwrap().unwrap();
+    let pw = "a long enough password";
+    let body = format!("token={token}&username=admin&password={0}&confirm={0}", urlencode(pw));
+    let post = |fetch_site: &'static str| {
+        let body = body.clone();
+        let t = &t;
+        async move {
+            let mut headers = vec![("content-type", "application/x-www-form-urlencoded"), ("origin", "null")];
+            if !fetch_site.is_empty() {
+                headers.push(("sec-fetch-site", fetch_site));
+            }
+            t.call("POST", "/setup", &headers, Body::from(body)).await.0
+        }
+    };
+    assert_eq!(post("").await, StatusCode::FORBIDDEN);
+    assert_eq!(post("cross-site").await, StatusCode::FORBIDDEN);
+    assert_eq!(post("same-origin").await, StatusCode::SEE_OTHER);
+    // A real but different origin is still refused.
+    let (status, _, _) = t
+        .call(
+            "POST",
+            "/login",
+            &[("content-type", "application/x-www-form-urlencoded"), ("origin", "https://evil.example"), ("sec-fetch-site", "same-origin")],
+            Body::from(format!("username=admin&password={}", urlencode(pw))),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
 }

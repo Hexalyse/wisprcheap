@@ -57,7 +57,9 @@ async fn security_headers(State(state): State<SharedState>, req: Request, next: 
         ),
     );
     h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
-    h.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+    // `same-origin`: our own form POSTs carry their Origin (checked against CSRF); other sites get
+    // no referrer. (`no-referrer` makes browsers send `Origin: null` even on same-origin POSTs.)
+    h.insert(header::REFERRER_POLICY, HeaderValue::from_static("same-origin"));
     h.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
     if state.config.is_https() {
         h.insert(header::STRICT_TRANSPORT_SECURITY, HeaderValue::from_static("max-age=31536000"));

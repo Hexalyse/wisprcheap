@@ -94,11 +94,20 @@ fn origin_of(url: &str) -> &str {
     }
 }
 
-/// POSTs must come from our own pages: same Origin (or Referer) as the public URL.
+/// POSTs must come from our own pages: same Origin (or Referer) as the public URL. A browser that sends
+/// `Origin: null` (privacy settings, extensions) is trusted when it also says `Sec-Fetch-Site:
+/// same-origin`, a header web pages can't set.
 fn same_origin(state: &SharedState, headers: &HeaderMap) -> bool {
     let expected = origin_of(&state.config.public_url);
     if let Some(origin) = headers.get(header::ORIGIN) {
-        return origin.to_str().is_ok_and(|o| o == expected);
+        let origin = origin.to_str().unwrap_or("");
+        if origin == "null" {
+            return headers
+                .get("sec-fetch-site")
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v == "same-origin");
+        }
+        return origin == expected;
     }
     headers
         .get(header::REFERER)
