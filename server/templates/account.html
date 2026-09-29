@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Account · WisprCheap sync{% endblock %}
+{% block content %}
+<h1>Account</h1>
+{% if let Some(n) = notice %}<p class="notice">{{ n }}</p>{% endif %}
+{% if let Some(e) = error %}<p class="error">{{ e }}</p>{% endif %}
+
+<section class="card">
+  <h2>Password</h2>
+  <form method="post" action="/account/password">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
+    <label>New password <input name="password" type="password" autocomplete="new-password" required minlength="12"></label>
+    <label>Confirm <input name="confirm" type="password" autocomplete="new-password" required minlength="12"></label>
+    <button>Change the password</button>
+  </form>
+  <form method="post" action="/account/signout-all" class="spaced">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="secondary">Sign out of every browser</button>
+  </form>
+  <p class="muted">Devices use their own tokens: revoke them on the Devices page.</p>
+</section>
+
+<section class="card">
+  <h2>Encryption</h2>
+  <p>{{ encryption }}</p>
+  <p class="muted">Forgot the sync passphrase and no device can change it anymore? Resetting deletes the encrypted
+  settings, keys and texts stored on the server (your devices keep their own copies and upload them again under a new
+  passphrase). The statistics stay.</p>
+  <form method="post" action="/account/reset-encryption">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+    <label>Type RESET to confirm <input name="confirm" required pattern="RESET"></label>
+    <button class="danger">Reset encryption</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Delete the account</h2>
+  <p class="muted">Deletes the account, its devices, synced data and statistics. This can't be undone.</p>
+  <form method="post" action="/account/delete">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+    <label>Type DELETE to confirm <input name="confirm" required pattern="DELETE"></label>
+    <button class="danger">Delete my account</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Activity</h2>
+  {% include "audit.html" %}
+</section>
+{% endblock %}

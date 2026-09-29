@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Devices · WisprCheap sync{% endblock %}
+{% block content %}
+<h1>Devices</h1>
+<section class="card">
+  <h2>Add a device</h2>
+  <p class="muted">Shows a one-time code and a QR code, valid 10 minutes. On Android, scan the QR code with the camera
+  (or type the code in Settings → Sync). On desktop, run <code>wisprcheap sync pair {{ public_url }} CODE</code>.</p>
+  <form method="post" action="/devices/pair" class="row">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input name="name" placeholder="Device name (optional)" maxlength="60">
+    <button>Add a device</button>
+  </form>
+</section>
+<section class="card">
+  <h2>Paired devices</h2>
+  {% if devices.is_empty() %}
+  <p class="muted">No device yet.</p>
+  {% else %}
+  <table>
+    <tr><th>Name</th><th>Platform</th><th>App</th><th>Paired</th><th>Last seen</th><th></th></tr>
+    {% for d in devices %}
+    <tr class="{% if d.revoked %}revoked{% endif %}">
+      <td>
+        {% if d.revoked %}{{ d.name }}{% else %}
+        <form method="post" action="/devices/{{ d.id }}/rename" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input name="name" value="{{ d.name }}" maxlength="60" aria-label="Device name"><button class="small">Rename</button>
+        </form>
+        {% endif %}
+      </td>
+      <td>{{ d.platform }}</td><td>{{ d.version }}</td><td>{{ d.paired }}</td><td>{{ d.last_seen }}</td>
+      <td>
+        {% if d.revoked %}revoked {{ d.revoked_at }}{% else %}
+        <form method="post" action="/devices/{{ d.id }}/revoke" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button class="danger small">Revoke</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</section>
+{% endblock %}

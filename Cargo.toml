@@ -6,6 +6,11 @@ license = "MIT"
 description = "Push-to-talk dictation: hold a hotkey, speak, and the cleaned-up text is pasted where you type."
 default-run = "wisprcheap"
 
+# The desktop app is the root package; `sync` (shared code) and `server` (the sync server) are members.
+# A plain `cargo build` still builds only the desktop app.
+[workspace]
+members = ["sync", "server"]
+
 [[bin]]
 name = "wisprcheap"
 path = "src/main.rs"
@@ -33,6 +38,7 @@ serde_yaml = "0.9"
 tao = "0.37"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "signal"] }
 tray-icon = "0.25"
+wisprcheap-sync = { path = "sync" }
 
 [target.'cfg(windows)'.dependencies]
 tauri-winrt-notification = "0.8"

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · WisprCheap sync{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>{{ title }}</h1>
+  {% for line in lines %}<p>{{ line }}</p>{% endfor %}
+  {% if let Some(code) = copy %}<p class="copy"><code>{{ code }}</code></p>{% endif %}
+  {% if let Some(href) = link_href %}<p><a class="button" href="{{ href }}">{{ link_label }}</a></p>{% endif %}
+</section>
+{% endblock %}

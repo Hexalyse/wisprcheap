@@ -119,7 +119,7 @@ server's statistics endpoint and don't need it.
                      │  web UI: login, devices, pairing, admin, dashboard │
                      │  SQLite: users, sessions, devices, records, stats  │
                      └────────────────────────────────────────────────────┘
-                       behind the user's reverse proxy (Caddy/Traefik) for TLS
+                       behind a reverse proxy run by the deployer, for TLS
 ```
 
 ### 3.1 Repository layout (Cargo workspace)
@@ -489,17 +489,19 @@ sync:
   - `WCS_TRUST_PROXY` (use `X-Forwarded-For` for rate limits and logs; only behind a proxy);
   - `WCS_ALLOW_HTTP` (LAN without TLS);
   - `WCS_LOG` (level).
-- **docker-compose example** with Caddy for automatic HTTPS:
+- **HTTPS is up to the deployer**: nginx-proxy + acme-companion, a Caddy or Traefik container, or an
+  existing reverse proxy. The server listens on plain HTTP inside the container and trusts
+  `X-Forwarded-*` headers only when `WCS_TRUST_PROXY=1`.
+- **docker-compose example** (the proxy is left out, as it depends on the deployment):
   ```yaml
   services:
     wisprcheap:
       image: ghcr.io/hexalyse/wisprcheap-server:0.1.0
-      environment: { WCS_PUBLIC_URL: "https://sync.example.com", WCS_TRUST_PROXY: "1" }
+      environment:
+        WCS_PUBLIC_URL: "https://sync.example.com"
+        WCS_TRUST_PROXY: "1"
       volumes: ["./data:/data"]
-    caddy:
-      image: caddy:2
-      ports: ["80:80", "443:443"]
-      command: caddy reverse-proxy --from sync.example.com --to wisprcheap:8080
+      expose: ["8080"]
   ```
 - **Bare metal**: the same binary (Linux x86_64 / arm64 release assets). `wisprcheap-server serve`
   runs it; a sample systemd unit is in `server/`.
@@ -545,7 +547,7 @@ sync:
 | S2 | Web UI | Login, setup, devices (QR), account, admin, dashboard, history | A new user can be invited, log in and pair a device from the browser |
 | S3 | Desktop client | Config section, CLI, engine, YAML/.env write-back, history ids, tray status | Two desktop instances on one account converge |
 | S4 | Android client | `:core` sync + crypto port, Sync page, deep-link pairing, WorkManager, history ids, all-device totals | Phone + desktop converge (dictionary, prompts, keys, stats) |
-| S5 | Packaging | Dockerfile, compose example, systemd unit, server CI (tests, image to GHCR and binaries on `server-v*` tags), docs | `docker compose up` behind Caddy works from the README |
+| S5 | Packaging | Dockerfile, compose example, systemd unit, server CI (tests, image to GHCR and binaries on `server-v*` tags), docs | `docker compose up` behind a reverse proxy works from the README |
 | S6 | Hardening | Security checklist review, backup/restore drill, 50k history entries performance check | Checklist signed off; v0.1.0 of the server released |
 
 ## 14. Risks

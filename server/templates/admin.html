@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Admin · WisprCheap sync{% endblock %}
+{% block content %}
+<h1>Admin</h1>
+<section class="card">
+  <h2>Invite a user</h2>
+  <p class="muted">Creates a single-use sign-up link, valid 7 days. Send it to the person: they choose their username and password.</p>
+  <form method="post" action="/admin/invite">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button>Create an invitation link</button>
+  </form>
+</section>
+<section class="card">
+  <h2>Users</h2>
+  <table>
+    <tr><th>User</th><th>Role</th><th class="num">Devices</th><th>Created</th><th>Actions</th></tr>
+    {% for u in users %}
+    <tr class="{% if u.disabled %}revoked{% endif %}">
+      <td>{{ u.username }}</td>
+      <td>{% if u.admin %}admin{% else %}user{% endif %}{% if u.disabled %}, disabled{% endif %}</td>
+      <td class="num">{{ u.devices }}</td>
+      <td>{{ u.created }}</td>
+      <td class="actions">
+        {% if u.is_self %}<span class="muted">you</span>{% else %}
+        <form method="post" action="/admin/users/{{ u.id }}/reset-link" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="small secondary">Password reset link</button></form>
+        {% if u.disabled %}
+        <form method="post" action="/admin/users/{{ u.id }}/enable" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="small secondary">Enable</button></form>
+        {% else %}
+        <form method="post" action="/admin/users/{{ u.id }}/disable" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="small secondary">Disable</button></form>
+        {% endif %}
+        <form method="post" action="/admin/users/{{ u.id }}/delete" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><input name="confirm" placeholder="type DELETE" required pattern="DELETE" class="tiny"><button class="small danger">Delete</button></form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+<section class="card">
+  <h2>Server</h2>
+  <p>Version {{ version }} · database {{ db_size }} · public URL <code>{{ public_url }}</code></p>
+  <p class="muted">Back up with <code>wisprcheap-server backup</code> (consistent copy while running).</p>
+</section>
+<section class="card">
+  <h2>Activity (all users)</h2>
+  {% include "audit.html" %}
+</section>
+{% endblock %}

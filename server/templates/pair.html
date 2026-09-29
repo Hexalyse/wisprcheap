@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Pair a device · WisprCheap sync{% endblock %}
+{% block content %}
+<section class="card narrow center">
+  <h1>Pair a device</h1>
+  <p class="muted">Valid until {{ expires }}, usable once.</p>
+  <div class="qr">{{ qr|safe }}</div>
+  <p class="code">{{ code }}</p>
+  <h2>Android</h2>
+  <p>Scan the QR code with the phone's camera, or open WisprCheap → Settings → Sync and enter
+  <code>{{ public_url }}</code> and the code.</p>
+  <h2>Desktop</h2>
+  <p class="copy"><code>wisprcheap sync pair {{ public_url }} {{ code }}</code></p>
+  <p class="muted">The first device of an account creates the sync passphrase; the others ask for it.
+  It encrypts your API keys, settings and dictated text before they leave the device: the server can't read them.</p>
+  <p><a class="button" href="/devices">Done</a></p>
+</section>
+{% endblock %}

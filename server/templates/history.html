@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}History · WisprCheap sync{% endblock %}
+{% block content %}
+<h1>History</h1>
+<p class="muted">Only the statistics are stored in clear. The dictated text is end-to-end encrypted and stays readable on your devices only.</p>
+<section class="card">
+  {% if rows.is_empty() %}
+  <p class="muted">No entry yet.</p>
+  {% else %}
+  <table>
+    <tr><th>Time (UTC)</th><th>Device</th><th>Mode</th><th class="num">Audio</th><th class="num">Words</th><th>Models</th><th class="num">Cost</th><th>Status</th></tr>
+    {% for r in rows %}
+    <tr class="{{ r.status }}"><td>{{ r.time }}</td><td>{{ r.device }}</td><td>{{ r.mode }}</td><td class="num">{{ r.audio }}</td><td class="num">{{ r.words }}</td><td>{{ r.models }}</td><td class="num">{{ r.cost }}</td><td>{{ r.status }}</td></tr>
+    {% endfor %}
+  </table>
+  {% if let Some(b) = older %}<p><a href="/history?before={{ b }}">Older entries →</a></p>{% endif %}
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Log in · WisprCheap sync{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>Log in</h1>
+  {% if let Some(e) = error %}<p class="error">{{ e }}</p>{% endif %}
+  <form method="post" action="/login">
+    <label>Username <input name="username" autocomplete="username" required autofocus value="{{ username }}"></label>
+    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+    <button>Log in</button>
+  </form>
+  <p class="muted">No account? Ask the server's admin for an invitation link.</p>
+</section>
+{% endblock %}

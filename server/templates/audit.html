@@ -1,0 +1,8 @@
+{% if audit.is_empty() %}
+<p class="muted">No event yet.</p>
+{% else %}
+<table>
+  <tr><th>Time (UTC)</th><th>User</th><th>Event</th><th>Detail</th><th>Device</th><th>IP</th></tr>
+  {% for a in audit %}<tr><td>{{ a.0 }}</td><td>{{ a.1 }}</td><td>{{ a.2 }}</td><td>{{ a.3 }}</td><td>{{ a.4 }}</td><td>{{ a.5 }}</td></tr>{% endfor %}
+</table>
+{% endif %}
