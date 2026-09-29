@@ -18,10 +18,14 @@ The design and the wire protocol are in [PLAN.md](PLAN.md) and [../sync/SPEC.md]
 
 ## Deploy with Docker
 
+The image (`ghcr.io/hexalyse/wisprcheap-server`) runs on `linux/amd64` and `linux/arm64` (Raspberry Pi 3
+and newer with a 64-bit OS).
+
 ```sh
 mkdir -p wisprcheap/data && cd wisprcheap
 sudo chown 65532:65532 data          # the image runs as a non-root user
-curl -O https://raw.githubusercontent.com/Hexalyse/wisprcheap/main/server/docker-compose.example.yml
+# (without sudo: docker run --rm -v "$PWD/data:/data" busybox chown 65532:65532 /data)
+curl -O https://raw.githubusercontent.com/Hexalyse/wisprcheap/master/server/docker-compose.example.yml
 mv docker-compose.example.yml docker-compose.yml   # edit WCS_PUBLIC_URL
 docker compose up -d
 docker compose logs wisprcheap       # shows the one-time admin setup link

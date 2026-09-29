@@ -9,11 +9,14 @@ COPY src src
 COPY sync sync
 COPY server server
 RUN cargo build --release --locked -p wisprcheap-server \
-    && cp target/release/wisprcheap-server /wisprcheap-server
+    && cp target/release/wisprcheap-server /wisprcheap-server \
+    && mkdir /data
 
 # Static musl binary (SQLite is bundled) on a minimal image, running as a non-root user (uid 65532).
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /wisprcheap-server /usr/local/bin/wisprcheap-server
+# Owned by the non-root user, so a named volume on /data is writable (a bind mount needs a chown).
+COPY --from=build --chown=65532:65532 /data /data
 ENV WCS_DATA_DIR=/data \
     WCS_BIND=0.0.0.0:8080
 VOLUME /data

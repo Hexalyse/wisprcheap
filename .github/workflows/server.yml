@@ -1,11 +1,12 @@
 # Tests the sync crate and the server on every change to them; on a `server-vX.Y.Z` tag, also publishes
-# the Docker image (ghcr.io/<owner>/wisprcheap-server) and a static Linux binary as a GitHub release.
+# the Docker image (ghcr.io/<owner>/wisprcheap-server, linux/amd64 + linux/arm64) and static Linux
+# binaries as a GitHub release.
 # Release: bump `version` in server/Cargo.toml, commit, then `git tag server-vX.Y.Z && git push origin server-vX.Y.Z`.
 name: Server
 
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths: ["sync/**", "server/**", "Cargo.lock", ".github/workflows/server.yml"]
     tags: ["server-v*"]
   pull_request:
@@ -30,13 +31,23 @@ jobs:
       - name: Test the sync crate and the server
         run: cargo test --locked -p wisprcheap-sync -p wisprcheap-server
 
-  release:
-    name: Publish
+  # One native build per architecture (no emulation), pushed as <version>-<arch>.
+  image:
+    name: Image (${{ matrix.arch }})
     if: startsWith(github.ref, 'refs/tags/server-v')
     needs: test
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            triple: x86_64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            triple: aarch64
+    runs-on: ${{ matrix.runner }}
     permissions:
-      contents: write
+      contents: read
       packages: write
     steps:
       - uses: actions/checkout@v7
@@ -51,36 +62,74 @@ jobs:
           echo "VERSION=$version" >> "$GITHUB_ENV"
           echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wisprcheap-server" >> "$GITHUB_ENV"
 
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push the image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: server/Dockerfile
+          platforms: linux/${{ matrix.arch }}
           push: true
-          tags: |
-            ${{ env.IMAGE }}:${{ env.VERSION }}
-            ${{ env.IMAGE }}:latest
+          provenance: false
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          tags: ${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
 
       - name: Extract the static binary
         run: |
-          docker create --name extract "$IMAGE:$VERSION"
+          docker create --name extract "$IMAGE:$VERSION-${{ matrix.arch }}"
           docker cp extract:/usr/local/bin/wisprcheap-server wisprcheap-server
           docker rm extract
-          tar czf "wisprcheap-server-$VERSION-linux-x86_64.tar.gz" wisprcheap-server server/wisprcheap-server.service server/docker-compose.example.yml
-          sha256sum *.tar.gz > SHA256SUMS.txt
+          tar czf "wisprcheap-server-$VERSION-linux-${{ matrix.triple }}.tar.gz" wisprcheap-server server/wisprcheap-server.service server/docker-compose.example.yml
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: server-${{ matrix.arch }}
+          path: wisprcheap-server-*.tar.gz
+
+  release:
+    name: Publish
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Version
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME#server-v}" >> "$GITHUB_ENV"
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wisprcheap-server" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Multi-architecture tags
+        run: |
+          docker buildx imagetools create -t "$IMAGE:$VERSION" -t "$IMAGE:latest" \
+            "$IMAGE:$VERSION-amd64" "$IMAGE:$VERSION-arm64"
+          docker buildx imagetools inspect "$IMAGE:$VERSION"
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: server-*
+          merge-multiple: true
 
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          sha256sum *.tar.gz > SHA256SUMS.txt
           gh release create "$GITHUB_REF_NAME" wisprcheap-server-*.tar.gz SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
             --title "wisprcheap sync server $VERSION" \
-            --notes "Docker image: \`$IMAGE:$VERSION\`. See server/README.md to deploy." \
+            --notes "Docker image: \`$IMAGE:$VERSION\` (linux/amd64, linux/arm64). See server/README.md to deploy." \
             --latest=false
