@@ -769,5 +769,7 @@ mod tests {
         assert_eq!(a, legacy_entry_id("dev_a", "2026-09-29T12:34:56.789Z"));
         assert_ne!(a, legacy_entry_id("dev_b", "2026-09-29T12:34:56.789Z"));
         assert_eq!(a.len(), 36);
+        // Same as Python's uuid.uuid5(uuid.NAMESPACE_URL, …) and the Android port.
+        assert_eq!(a, "e56fc249-9fa1-523b-b544-fc2e2da4f43f");
     }
 }

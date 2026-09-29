@@ -436,9 +436,14 @@ fn print_outcome(result: &Result<SyncOutcome, SyncError>) -> bool {
                 println!("Synced: {}.", o.summary());
             }
             if let Some(m) = &o.month {
+                let usd = if m.total_usd > 0.0 && m.total_usd < 0.01 {
+                    "<$0.01".to_string()
+                } else {
+                    format!("${:.2}", m.total_usd)
+                };
                 println!(
-                    "  This month, all devices: ${:.2}, {} words ({} device(s)).",
-                    m.total_usd, m.words, o.devices
+                    "  This month, all devices: {usd}, {} words ({} device(s)).",
+                    m.words, o.devices
                 );
             }
             true
@@ -450,11 +455,9 @@ fn print_outcome(result: &Result<SyncOutcome, SyncError>) -> bool {
     }
 }
 
-fn notify_running_app() {
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build();
-    if let Ok(rt) = rt {
-        let _ = rt.block_on(crate::instance::send_command("sync-now", Duration::from_secs(1)));
-    }
+/// Lets a running instance refresh its sync status (it syncs too, quickly: nothing is left to do).
+async fn notify_running_app() {
+    let _ = crate::instance::send_command("sync-now", Duration::from_secs(1)).await;
 }
 
 /// Entry point of `wisprcheap sync ...` (`rest`: the arguments after `sync`).
@@ -521,19 +524,19 @@ pub fn main(rest: &[String], config: &ConfigArgs) -> i32 {
                     if report.created_keyring { " Sync passphrase set." } else { "" }
                 );
                 let ok = print_outcome(&report.first_sync);
-                notify_running_app();
+                notify_running_app().await;
                 Ok(if ok { 0 } else { 1 })
             }
             "unlock" => {
                 let outcome = unlock(&ctx, &kdf, &mut ask).await?;
                 let ok = print_outcome(&outcome);
-                notify_running_app();
+                notify_running_app().await;
                 Ok(if ok { 0 } else { 1 })
             }
             "now" => {
                 let outcome = sync_once(&ctx).await;
                 let ok = print_outcome(&outcome);
-                notify_running_app();
+                notify_running_app().await;
                 Ok(if ok { 0 } else { 1 })
             }
             "status" => status(&ctx).await,
