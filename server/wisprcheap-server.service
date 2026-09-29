@@ -1,0 +1,27 @@
+# /etc/systemd/system/wisprcheap-server.service
+# Install the binary in /usr/local/bin, create the user and data directory:
+#   sudo useradd --system --home /var/lib/wisprcheap --create-home wisprcheap
+# then: sudo systemctl enable --now wisprcheap-server
+[Unit]
+Description=wisprcheap sync server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=wisprcheap
+Group=wisprcheap
+Environment=WCS_PUBLIC_URL=https://sync.example.com
+Environment=WCS_BIND=127.0.0.1:8080
+Environment=WCS_DATA_DIR=/var/lib/wisprcheap
+Environment=WCS_TRUST_PROXY=1
+Environment=WCS_BACKUP_DAILY=1
+ExecStart=/usr/local/bin/wisprcheap-server serve
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/wisprcheap
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

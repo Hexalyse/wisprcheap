@@ -1,0 +1,10 @@
+target
+**/target
+.git
+.cache
+.env
+config.yaml
+history.jsonl
+recordings
+wisprcheap.log*
+server/data

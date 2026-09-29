@@ -1,0 +1,23 @@
+# Example deployment. HTTPS is up to you: put this service behind your reverse proxy
+# (nginx-proxy + acme-companion, a Caddy or Traefik container, an existing nginx…) and set
+# WCS_PUBLIC_URL to the public https:// address. The data directory must be writable by uid 65532:
+#   mkdir -p data && sudo chown 65532:65532 data
+services:
+  wisprcheap:
+    image: ghcr.io/hexalyse/wisprcheap-server:latest
+    restart: unless-stopped
+    environment:
+      WCS_PUBLIC_URL: "https://sync.example.com"
+      # The proxy sets X-Forwarded-For: trust it for rate limits and logs.
+      WCS_TRUST_PROXY: "1"
+      # Daily consistent backup into /data/backups (keeps 7).
+      WCS_BACKUP_DAILY: "1"
+    volumes:
+      - ./data:/data
+    expose:
+      - "8080"
+    # With nginx-proxy + acme-companion, for example:
+    # environment:
+    #   VIRTUAL_HOST: sync.example.com
+    #   VIRTUAL_PORT: "8080"
+    #   LETSENCRYPT_HOST: sync.example.com
