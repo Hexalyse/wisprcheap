@@ -40,11 +40,12 @@ impl IconName {
 
 const SIZES: [u32; 7] = [16, 20, 24, 32, 40, 48, 64];
 
-fn len(x: f64, y: f64) -> f64 {
+pub(crate) fn len(x: f64, y: f64) -> f64 {
     x.hypot(y)
 }
 
-fn segment(p: (f64, f64), a: (f64, f64), b: (f64, f64), r: f64) -> f64 {
+/// Distance to a thick line from `a` to `b` with round ends.
+pub(crate) fn segment(p: (f64, f64), a: (f64, f64), b: (f64, f64), r: f64) -> f64 {
     let (px, py) = (p.0 - a.0, p.1 - a.1);
     let (bx, by) = (b.0 - a.0, b.1 - a.1);
     let denom = bx * bx + by * by;
@@ -61,7 +62,8 @@ fn holder(p: (f64, f64)) -> f64 {
     len(p.0 - (cx - radius), p.1 - cy).min(len(p.0 - (cx + radius), p.1 - cy)) - half
 }
 
-fn mic_distance(p: (f64, f64), slash: bool) -> f64 {
+/// The microphone (optionally crossed out), also drawn by the overlay.
+pub(crate) fn mic_distance(p: (f64, f64), slash: bool) -> f64 {
     let mut d = segment(p, (16.0, 9.5), (16.0, 14.5), 4.0) // capsule
         .min(holder(p))
         .min(segment(p, (16.0, 21.5), (16.0, 25.5), 1.25)) // stem

@@ -16,6 +16,7 @@ with the same features, config file, prompts, history format and tray menu, in a
   (French → English, etc.: pairs configured in `config.yaml`, chosen from the tray)
 - Short dictations can skip the polish step and paste ~2 s sooner (`polish.minWords`)
 - Short sound cues for start, stop, hands-free, command, cancel and error, plus a desktop notification when something fails
+- A small [overlay](#recording-overlay) at the bottom of the screen while recording (with a live waveform) and transcribing
 - `history.jsonl` log with raw and polished text, timings and estimated cost, plus `wisprcheap stats`
 - Runs in the background with a tray icon: status color, this month's estimated cost, log window, pause, retry a failed dictation...
 - Follows the default microphone and speakers (plug in a headset, it's used from the next dictation)
@@ -112,6 +113,15 @@ The top of the menu shows the status and this month's estimated cost and word co
 
 When something fails (transcription, command, translation, microphone, config reload...), a notification
 says what happened; click it to open the log. Turn it off with `notifications.errors: false`.
+
+## Recording overlay
+
+While you speak, a small pill at the bottom center of the screen (above the taskbar, on the screen of the focused
+window) shows a live waveform: red with a microphone for a dictation, indigo with sparkles for a command, plus a
+padlock in hands-free mode. It then shrinks to a spinner while the audio is transcribed and polished, and briefly shows
+how it went: a check (pasted), a clipboard (only copied), a crossed-out microphone (nothing heard) or a shaking "!" (error).
+
+It never takes the focus and clicks go through it. Turn it off with `overlay.enabled: false`.
 
 ## Translation mode
 
@@ -212,7 +222,7 @@ every 15 minutes, and from **Sync now** in the tray (which also shows the sync s
 are written into `config.yaml` (comments and layout are kept) and API keys into `.env` next to it.
 
 What's synced: transcription, cleanup (polish), command and translation settings, the five API keys, the
-dictionary, translation pairs and `pricing.overrides`. Hotkeys, microphone, sounds, output, history options and the
+dictionary, translation pairs and `pricing.overrides`. Hotkeys, microphone, sounds, overlay, output, history options and the
 `sync` section itself stay per device. `sync.history` chooses what happens to the history: `upload` (default),
 `download` (also add the other devices' entries to `history.jsonl`) or `off`.
 
@@ -240,7 +250,9 @@ section of `config.yaml`: keep that file private, like `.env`.
 - The control channel (single instance, `start`/`stop`) is a per-user named pipe on Windows (`\\.\pipe\wisprcheap-<user>`,
   the same one the TypeScript version uses, so only one of the two runs at a time) and a Unix socket in
   `$XDG_RUNTIME_DIR` on Linux.
-- `cargo test` runs the unit tests (config, dictionary editing, prompts, pricing, audio, the hotkey state machine).
+- `cargo test` runs the unit tests (config, dictionary editing, prompts, pricing, audio, the hotkey state machine,
+  the overlay's states). `cargo test overlay_previews -- --ignored` renders every look of the overlay to
+  `target/overlay-preview/`.
   On Linux, `cargo test -- --ignored virtual_keyboards` also tests reading and typing through virtual keyboards
   (needs access to `/dev/uinput`, e.g. as root).
   `WISPRCHEAP_NO_INJECT=1` never sends Ctrl+C / Ctrl+V, and `WISPRCHEAP_INSTANCE=<name>` runs a separate instance,
@@ -254,6 +266,8 @@ section of `config.yaml`: keep that file private, like `.env`.
   AppIndicators don't report left clicks: use **Show log** in the menu. Notifications go through D-Bus
   (`org.freedesktop.Notifications`).
 - Without a display, the app runs without the tray icon and logs why.
+- The [recording overlay](#recording-overlay) needs X11 and a compositor (for the transparency; most desktops have one).
+  Wayland doesn't let apps place their windows, so it isn't shown there (the log says so).
 - The clipboard works on X11 and Wayland (data-control protocol, with XWayland's clipboard as the fallback).
 
 ### Wayland

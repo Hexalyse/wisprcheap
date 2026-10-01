@@ -10,9 +10,10 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::command::Commander;
 use crate::config::{Config, DictionaryEntry, LlmOptions, LoadedConfig, TranslationPair};
 use crate::history::{History, HistoryEntry, count_words};
-use crate::hotkey::Mode;
+use crate::hotkey::{Mode, State as HotkeyState};
 use crate::icons::IconName;
 use crate::output::SharedHotkey;
+use crate::overlay::{Feedback, OverlayStatus, Recording};
 use crate::polish::Polisher;
 use crate::sounds::{Cue, Sounds};
 use crate::state::AppState;
@@ -101,6 +102,8 @@ pub struct LastFailed {
 pub struct Status {
     pub paused: bool,
     pub pending: usize,
+    /// Pending jobs that process a recording (dictation, command), shown by the overlay.
+    pub audio_jobs: usize,
     pub recording: bool,
     pub recording_mode: Mode,
     pub busy_label: String,
@@ -201,14 +204,25 @@ impl Shared {
             return;
         };
         let p = self.pipeline();
-        let label = self.hotkey.lock().unwrap().label();
+        let (label, hands_free) = {
+            let h = self.hotkey.lock().unwrap();
+            (h.label(), h.state() == HotkeyState::HandsFree)
+        };
         let pair = self.current_pair(&p);
         let translating = pair
             .map(|p| format!(" (to {})", p.to_name))
             .unwrap_or_default();
-        let (icon, text) = {
+        let (icon, text, overlay) = {
             let st = self.status.lock().unwrap();
-            if st.recording {
+            let overlay = OverlayStatus {
+                enabled: p.config.overlay.enabled,
+                recording: st.recording.then_some(Recording {
+                    mode: st.recording_mode,
+                    hands_free,
+                }),
+                busy: st.audio_jobs > 0,
+            };
+            let (icon, text) = if st.recording {
                 let text = if st.recording_mode == Mode::Command {
                     "Recording command...".to_string()
                 } else {
@@ -221,9 +235,20 @@ impl Shared {
                 (IconName::Paused, "Paused".to_string())
             } else {
                 (IconName::Idle, format!("Ready{translating} - hold {label}"))
-            }
+            };
+            (icon, text, overlay)
         };
         ui.set_state(icon, &text);
+        ui.set_overlay(overlay);
+    }
+
+    /// Show how a recording ended on the overlay (when it's enabled).
+    pub fn overlay_feedback(&self, feedback: Feedback) {
+        if self.pipeline().config.overlay.enabled
+            && let Some(ui) = &self.ui
+        {
+            ui.overlay_feedback(feedback);
+        }
     }
 
     /// Push everything the tray menu shows that doesn't depend on the recording state.
@@ -278,7 +303,13 @@ impl Shared {
     }
 
     pub fn enqueue(&self, job: Job) {
-        self.status.lock().unwrap().pending += 1;
+        {
+            let mut st = self.status.lock().unwrap();
+            st.pending += 1;
+            if job.has_audio() {
+                st.audio_jobs += 1;
+            }
+        }
         let _ = self.job_tx.send(job);
     }
 

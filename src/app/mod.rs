@@ -15,6 +15,7 @@ use crate::config::{ConfigArgs, LoadedConfig, ensure_config_file, load_config};
 use crate::hotkey::{CancelReason, HotkeyEvent, Mode, PushToTalk, State};
 use crate::instance::{AcquireError, Instance, Request, acquire_instance};
 use crate::keyboard::{Hook, KeyEvent};
+use crate::overlay::Feedback;
 use crate::paths::paths;
 use crate::recorder::Recorder;
 use crate::sounds::{Cue, Sounds};
@@ -135,6 +136,7 @@ pub async fn run(
     let status = Status {
         paused: false,
         pending: 0,
+        audio_jobs: 0,
         recording: false,
         recording_mode: Mode::Dictation,
         busy_label: "Transcribing...".into(),
@@ -336,6 +338,7 @@ impl Actor {
             HotkeyEvent::Lock => {
                 self.shared.play(Cue::Lock);
                 info!("Hands-free mode: press the hotkey again to stop.");
+                self.shared.update_status(); // the overlay shows a padlock
             }
             HotkeyEvent::Cancel(reason) => {
                 let mode = self.shared.status.lock().unwrap().recording_mode;
@@ -365,6 +368,7 @@ impl Actor {
         if let Err(e) = tokio::task::block_in_place(|| self.recorder.start()) {
             self.shared.hotkey.lock().unwrap().reset();
             self.shared.play(Cue::Error);
+            self.shared.overlay_feedback(Feedback::Error);
             error!("Could not start the microphone: {e}");
             self.shared
                 .notify_error("Microphone unavailable", &e.to_string());

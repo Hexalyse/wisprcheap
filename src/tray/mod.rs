@@ -1,4 +1,5 @@
-//! Tray icon, context menu, log window and error notifications, on the main thread's event loop.
+//! Tray icon, context menu, log window, error notifications and the recording overlay, on the main thread's
+//! event loop.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -10,6 +11,7 @@ use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuIt
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::icons::{IconName, render_rgba, write_icons};
+use crate::overlay::{Feedback, Overlay, OverlayStatus};
 
 #[cfg(windows)]
 #[path = "logwin_windows.rs"]
@@ -40,6 +42,10 @@ pub enum UiEvent {
     ToggleLog,
     /// The log window was hidden by the user (Esc / close button).
     LogHidden,
+    /// What the recording overlay shows.
+    Overlay(OverlayStatus),
+    /// How a recording ended, shown for a moment by the overlay.
+    OverlayFeedback(Feedback),
     Exit,
 }
 
@@ -112,6 +118,14 @@ impl Ui {
 
     pub fn show_log(&self) {
         self.send(UiEvent::ShowLog);
+    }
+
+    pub fn set_overlay(&self, status: OverlayStatus) {
+        self.send(UiEvent::Overlay(status));
+    }
+
+    pub fn overlay_feedback(&self, feedback: Feedback) {
+        self.send(UiEvent::OverlayFeedback(feedback));
     }
 
     /// Remove the tray icon and end the event loop (which exits the process).
@@ -367,6 +381,7 @@ pub fn run(
     };
     let notify_ui = ui.clone();
     let mut tray_failed = false;
+    let mut overlay = Overlay::new();
 
     event_loop.run(move |event, _target, control_flow| {
         // The app's runtime lives as long as the event loop.
@@ -449,7 +464,10 @@ pub fn run(
                 update_show_log(&tray, visible);
             }
             UiEvent::LogHidden => update_show_log(&tray, false),
+            UiEvent::Overlay(status) => overlay.set_status(status),
+            UiEvent::OverlayFeedback(feedback) => overlay.feedback(feedback),
             UiEvent::Exit => {
+                overlay.destroy();
                 log_window.destroy();
                 tray = None; // removes the icon
                 tray_failed = true; // don't re-create it

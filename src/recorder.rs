@@ -4,6 +4,7 @@
 //!
 //! Audio is captured in the device's native format, mixed to mono and resampled to 16 kHz int16.
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -67,6 +68,16 @@ pub fn resolve_device(setting: &DeviceSetting) -> Result<cpal::Device> {
     }
 }
 
+/// Loudest RMS of the audio callbacks since the last `take_level()`, as f32 bits (non-negative floats
+/// order like their bits, so `fetch_max` works).
+static LEVEL: AtomicU32 = AtomicU32::new(0);
+
+/// Loudest short-term RMS (linear, 0..1) of the microphone since the previous call; 0 when not recording.
+/// Read by the overlay's waveform.
+pub fn take_level() -> f32 {
+    f32::from_bits(LEVEL.swap(0, Ordering::Relaxed))
+}
+
 struct Captured {
     samples: Vec<f32>,
     rate: u32,
@@ -116,9 +127,20 @@ where
         config,
         move |data: &[T], _| {
             let mut buf = buffer.lock().unwrap();
+            let mut squares = 0.0f32;
+            let mut frames = 0usize;
             for frame in data.chunks(channels) {
                 let sum: f32 = frame.iter().map(|&s| f32::from_sample(s)).sum();
-                buf.push(sum / frame.len() as f32);
+                let mono = sum / frame.len() as f32;
+                squares += mono * mono;
+                frames += 1;
+                buf.push(mono);
+            }
+            if frames > 0 {
+                let rms = (squares / frames as f32).sqrt();
+                if rms.is_finite() {
+                    LEVEL.fetch_max(rms.to_bits(), Ordering::Relaxed);
+                }
             }
         },
         |e| crate::warn!("[recorder] read failed: {e}"),

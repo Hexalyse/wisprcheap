@@ -19,6 +19,7 @@ pub mod keyboard;
 pub mod lang;
 pub mod llm;
 pub mod output;
+pub mod overlay;
 pub mod paths;
 pub mod polish;
 pub mod pricing;

@@ -343,6 +343,19 @@ impl Default for SoundsConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct OverlayConfig {
+    /// Show a small indicator at the bottom center of the screen while recording and processing.
+    pub enabled: bool,
+}
+
+impl Default for OverlayConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct HistoryConfig {
     pub enabled: bool,
@@ -377,6 +390,7 @@ pub struct Config {
     pub notifications: NotificationsConfig,
     pub output: OutputConfig,
     pub sounds: SoundsConfig,
+    pub overlay: OverlayConfig,
     pub history: HistoryConfig,
     pub pricing: PricingConfig,
     pub sync: SyncConfig,
@@ -567,6 +581,7 @@ fn drop_null_sections(value: &mut serde_yaml::Value) {
         "notifications",
         "output",
         "sounds",
+        "overlay",
         "history",
         "pricing",
         "sync",

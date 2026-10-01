@@ -15,6 +15,7 @@ use crate::history::{
 };
 use crate::llm::is_network_error;
 use crate::output::{Selection, capture_selection, deliver, restore_clipboard};
+use crate::overlay::Feedback;
 use crate::pricing::{llm_cost_with, transcription_cost_with};
 use crate::sounds::Cue;
 use crate::{error, info, say};
@@ -32,9 +33,17 @@ pub enum Job {
     AddWord(AddWordSource),
 }
 
+impl Job {
+    /// Processes a recording (the overlay shows these).
+    pub fn has_audio(&self) -> bool {
+        !matches!(self, Job::AddWord(_))
+    }
+}
+
 pub async fn worker(shared: Arc<Shared>, mut rx: tokio::sync::mpsc::UnboundedReceiver<Job>) {
     while let Some(job) = rx.recv().await {
         let sh = shared.clone();
+        let audio = job.has_audio();
         // Run in its own task so a bug in one job doesn't stop the queue.
         let result = tokio::spawn(async move {
             match job {
@@ -46,10 +55,16 @@ pub async fn worker(shared: Arc<Shared>, mut rx: tokio::sync::mpsc::UnboundedRec
         .await;
         if let Err(e) = result {
             error!("Unexpected error: {e}");
+            if audio {
+                shared.overlay_feedback(Feedback::Error);
+            }
         }
         {
             let mut st = shared.status.lock().unwrap();
             st.pending = st.pending.saturating_sub(1);
+            if audio {
+                st.audio_jobs = st.audio_jobs.saturating_sub(1);
+            }
             st.busy_label = "Transcribing...".into();
         }
         shared.update_status();
@@ -72,9 +87,19 @@ fn is_usable_audio(sh: &Shared, p: &Pipeline, pcm: &[i16]) -> bool {
             js_number(threshold)
         );
         sh.play(Cue::Cancel);
+        sh.overlay_feedback(Feedback::Discarded);
         return false;
     }
     true
+}
+
+/// The overlay's feedback for a delivery.
+fn delivered_feedback(delivered: Option<Delivered>) -> Feedback {
+    match delivered {
+        Some(Delivered::Pasted) => Feedback::Pasted,
+        Some(Delivered::Clipboard) => Feedback::Copied,
+        None => Feedback::Error,
+    }
 }
 
 fn new_entry(p: &Pipeline, pcm: &[i16], started_at: chrono::DateTime<Utc>) -> HistoryEntry {
@@ -170,6 +195,7 @@ pub async fn process_dictation(sh: &Arc<Shared>, pcm: Arc<Vec<i16>>, retry: bool
                 ts: started_at.with_timezone(&Local),
             }));
             sh.play(Cue::Error);
+            sh.overlay_feedback(Feedback::Error);
             let saved = entry
                 .audio_file
                 .as_ref()
@@ -193,6 +219,7 @@ pub async fn process_dictation(sh: &Arc<Shared>, pcm: Arc<Vec<i16>>, retry: bool
         info!("Discarded: the transcript is empty.");
         sh.record(&p, &entry);
         sh.play(Cue::Cancel);
+        sh.overlay_feedback(Feedback::Discarded);
         return;
     }
 
@@ -261,6 +288,7 @@ pub async fn process_dictation(sh: &Arc<Shared>, pcm: Arc<Vec<i16>>, retry: bool
             sh.notify_error("Could not paste", &e.to_string());
         }
     }
+    sh.overlay_feedback(delivered_feedback(entry.delivered));
     sh.finish_entry(&p, &mut entry, &text);
 
     let action = if retry {
@@ -315,6 +343,7 @@ pub async fn process_command(sh: &Arc<Shared>, pcm: Arc<Vec<i16>>) {
             entry.error = Some(message.clone());
             sh.record(&p, &entry);
             sh.play(Cue::Error);
+            sh.overlay_feedback(Feedback::Error);
             error!("Command: transcription failed: {message}");
             sh.notify_error(
                 "Command failed",
@@ -330,6 +359,7 @@ pub async fn process_command(sh: &Arc<Shared>, pcm: Arc<Vec<i16>>) {
         info!("Command discarded: the instruction is empty.");
         sh.record(&p, &entry);
         sh.play(Cue::Cancel);
+        sh.overlay_feedback(Feedback::Discarded);
         return;
     }
 
@@ -359,6 +389,7 @@ pub async fn process_command(sh: &Arc<Shared>, pcm: Arc<Vec<i16>>) {
             restore_clipboard(selection.previous.as_deref()).await;
             sh.record(&p, &entry);
             sh.play(Cue::Error);
+            sh.overlay_feedback(Feedback::Error);
             error!("{message}\n  instruction: {instruction}");
             sh.notify_error("Command failed", &message);
             return;
@@ -376,6 +407,7 @@ pub async fn process_command(sh: &Arc<Shared>, pcm: Arc<Vec<i16>>) {
             sh.notify_error("Could not paste", &e.to_string());
         }
     }
+    sh.overlay_feedback(delivered_feedback(entry.delivered));
     sh.finish_entry(&p, &mut entry, &text);
 
     let target = match &selection.text {
