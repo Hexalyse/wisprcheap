@@ -278,6 +278,9 @@ fn insert_item(source: &str, term: &str) -> Option<String> {
 
 /// Append `term` to the `dictionary:` list of a YAML config file.
 pub fn add_dictionary_term(file: &Path, raw_term: &str) -> Result<(String, AddTermResult)> {
+    let _edit = crate::config::EDIT_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let term = validate_term(raw_term)?;
     let source =
         std::fs::read_to_string(file).map_err(|e| anyhow!("can't read {}: {e}", file.display()))?;

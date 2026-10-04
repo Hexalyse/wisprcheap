@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use anyhow::{Result, anyhow, bail};
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::lang::{canonical_language, language_name};
 use crate::paths::paths;
@@ -16,6 +16,9 @@ pub const DEFAULT_POLISH_INSTRUCTIONS: &str = "Remove filler words, repeated sta
 
 /// Written when the user opens or edits a config that doesn't exist yet.
 pub const EXAMPLE_CONFIG: &str = include_str!("../config.example.yaml");
+
+/// Serialize in-process config edits (companion, dictionary shortcut and sync).
+pub(crate) static EDIT_LOCK: Mutex<()> = Mutex::new(());
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -29,7 +32,7 @@ where
     Option::<T>::deserialize(d).map(Some)
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct HotkeyConfig {
     /// Hold to dictate. All keys must be held. Generic names (Ctrl, Shift, Alt, Win) match left or right.
@@ -62,7 +65,7 @@ impl Default for HotkeyConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum DeviceSetting {
     Index(i64),
@@ -75,7 +78,7 @@ impl DeviceSetting {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct RecordingConfig {
     /// "default", a device index (see `wisprcheap devices`), or part of a device name.
@@ -101,7 +104,7 @@ impl Default for RecordingConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Provider {
     Elevenlabs,
@@ -117,7 +120,7 @@ impl Provider {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ElevenLabsConfig {
     pub api_key: Option<String>,
@@ -141,7 +144,7 @@ impl Default for ElevenLabsConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct OpenAiTranscriptionConfig {
     pub api_key: Option<String>,
@@ -162,7 +165,7 @@ impl Default for OpenAiTranscriptionConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TranscriptionConfig {
     pub provider: Provider,
@@ -185,7 +188,7 @@ impl Default for TranscriptionConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct PolishConfig {
     pub enabled: bool,
@@ -218,7 +221,7 @@ impl Default for PolishConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum DictionaryItem {
     Term(String),
@@ -230,7 +233,7 @@ pub enum DictionaryItem {
 }
 
 /// LLM used by command mode. Every unset field falls back to the polish settings.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct CommandConfig {
     pub api_key: Option<String>,
@@ -256,7 +259,7 @@ impl Default for CommandConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PairConfig {
     #[serde(default)]
     pub from: Option<String>,
@@ -264,7 +267,7 @@ pub struct PairConfig {
 }
 
 /// Translation mode: pick a pair in the tray menu and dictations are translated before pasting.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TranslationConfig {
     pub api_key: Option<String>,
@@ -292,7 +295,7 @@ impl Default for TranslationConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct NotificationsConfig {
     /// Show a notification when something fails (transcription, command, config reload...).
@@ -305,7 +308,7 @@ impl Default for NotificationsConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct OutputConfig {
     /// Simulate Ctrl+V into the focused app. If false, the text is only copied to the clipboard.
@@ -326,7 +329,7 @@ impl Default for OutputConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SoundsConfig {
     pub enabled: bool,
@@ -342,7 +345,7 @@ impl Default for SoundsConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct OverlayConfig {
     /// Show a small indicator at the bottom center of the screen while recording and processing.
@@ -355,7 +358,7 @@ impl Default for OverlayConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct HistoryConfig {
     pub enabled: bool,
@@ -377,7 +380,7 @@ impl Default for HistoryConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
     pub hotkey: HotkeyConfig,
@@ -397,13 +400,13 @@ pub struct Config {
 }
 
 /// Prices of models the built-in table doesn't know (or that changed). Synced between devices.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct PricingConfig {
     pub overrides: Vec<PriceValue>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SyncHistoryMode {
     /// Upload this device's history entries (statistics readable by the server, text encrypted).
@@ -427,7 +430,7 @@ impl SyncHistoryMode {
 
 /// Optional sync with a self-hosted wisprcheap server (`wisprcheap sync pair` writes this section).
 /// Never synced itself.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct SyncConfig {
     pub server: String,
@@ -560,7 +563,9 @@ fn interpolate_with(s: &str, lookup: &dyn Fn(&str) -> Option<String>) -> String 
 fn interpolate_value(value: &mut serde_yaml::Value, lookup: &dyn Fn(&str) -> Option<String>) {
     match value {
         serde_yaml::Value::String(s) => *s = interpolate_with(s, lookup),
-        serde_yaml::Value::Sequence(seq) => seq.iter_mut().for_each(|v| interpolate_value(v, lookup)),
+        serde_yaml::Value::Sequence(seq) => {
+            seq.iter_mut().for_each(|v| interpolate_value(v, lookup))
+        }
         serde_yaml::Value::Mapping(map) => map
             .iter_mut()
             .for_each(|(_, v)| interpolate_value(v, lookup)),
@@ -800,7 +805,9 @@ fn validate(config: &mut Config) -> Vec<String> {
     for (i, o) in config.pricing.overrides.iter().enumerate() {
         let path = format!("pricing.overrides[{i}]");
         if o.model.trim().is_empty() {
-            issues.push(format!("✖ Too small: expected string to have >=1 characters\n  → at {path}.model"));
+            issues.push(format!(
+                "✖ Too small: expected string to have >=1 characters\n  → at {path}.model"
+            ));
         }
         for (name, v) in [
             ("perMinute", o.per_minute),
@@ -808,7 +815,9 @@ fn validate(config: &mut Config) -> Vec<String> {
             ("outputPerM", o.output_per_m),
         ] {
             if v.is_some_and(|v| !v.is_finite() || v < 0.0) {
-                issues.push(format!("✖ Expected a positive number\n  → at {path}.{name}"));
+                issues.push(format!(
+                    "✖ Expected a positive number\n  → at {path}.{name}"
+                ));
             }
         }
     }
@@ -828,6 +837,15 @@ pub fn load_config(args: &ConfigArgs) -> Result<LoadedConfig> {
 /// Like [`load_config`], but missing API keys and bad translation pairs are returned instead of
 /// failing (sync needs the config of a device that isn't set up yet). Invalid YAML still fails.
 pub fn load_config_lenient(args: &ConfigArgs) -> Result<(LoadedConfig, Vec<String>)> {
+    load_config_inner(args, None)
+}
+
+/// Validate a prospective edit using the same schema, environment and checks as a normal reload.
+pub fn validate_config_text(args: &ConfigArgs, text: &str) -> Result<Vec<String>> {
+    load_config_inner(args, Some(text)).map(|(_, problems)| problems)
+}
+
+fn load_config_inner(args: &ConfigArgs, text: Option<&str>) -> Result<(LoadedConfig, Vec<String>)> {
     let config_path = resolve_config_path(args)?;
     let base_dir = config_path
         .as_ref()
@@ -840,19 +858,27 @@ pub fn load_config_lenient(args: &ConfigArgs) -> Result<(LoadedConfig, Vec<Strin
         env_files.push(app_env);
     }
     let from_files = read_env_files(&env_files);
-    let lookup = |name: &str| std::env::var(name).ok().or_else(|| from_files.get(name).cloned());
+    let lookup = |name: &str| {
+        std::env::var(name)
+            .ok()
+            .or_else(|| from_files.get(name).cloned())
+    };
 
     let where_ = config_path
         .as_ref()
         .map(|p| format!(" ({})", p.display()))
         .unwrap_or_default();
-    let mut raw: serde_yaml::Value = match &config_path {
-        Some(p) => {
-            let text = std::fs::read_to_string(p)
-                .map_err(|e| anyhow!("Could not read {}: {e}", p.display()))?;
-            serde_yaml::from_str(&text).map_err(|e| anyhow!("Invalid config{where_}:\n{e}"))?
+    let mut raw: serde_yaml::Value = if let Some(text) = text {
+        serde_yaml::from_str(text).map_err(|e| anyhow!("Invalid config{where_}:\n{e}"))?
+    } else {
+        match &config_path {
+            Some(p) => {
+                let text = std::fs::read_to_string(p)
+                    .map_err(|e| anyhow!("Could not read {}: {e}", p.display()))?;
+                serde_yaml::from_str(&text).map_err(|e| anyhow!("Invalid config{where_}:\n{e}"))?
+            }
+            None => serde_yaml::Value::Null,
         }
-        None => serde_yaml::Value::Null,
     };
     if raw.is_null() {
         raw = serde_yaml::Value::Mapping(Default::default());
@@ -1133,9 +1159,11 @@ mod tests {
         assert_eq!(loaded.config.sync.history, SyncHistoryMode::Download);
         assert_eq!(loaded.config.pricing.overrides[0].per_minute, Some(0.01));
         assert!(!load_str(KEYS).unwrap().config.sync.enabled());
-        let err = load_str(&format!("{KEYS}pricing:\n  overrides:\n    - {{ model: m, perMinute: -1 }}\n"))
-            .unwrap_err()
-            .to_string();
+        let err = load_str(&format!(
+            "{KEYS}pricing:\n  overrides:\n    - {{ model: m, perMinute: -1 }}\n"
+        ))
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("pricing.overrides[0].perMinute"), "{err}");
         let err = load_str(&format!("{KEYS}sync:\n  history: sometimes\n"))
             .unwrap_err()

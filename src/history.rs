@@ -43,6 +43,8 @@ pub struct Costs {
 pub enum Delivered {
     Pasted,
     Clipboard,
+    /// Android inserted text directly through its input connection.
+    Inserted,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

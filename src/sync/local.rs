@@ -410,6 +410,7 @@ pub fn apply(
     incoming: &[Incoming],
     backup: bool,
 ) -> Result<ApplyReport> {
+    let _edit = crate::config::EDIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut report = ApplyReport::default();
     let config_file = loaded
         .config_path

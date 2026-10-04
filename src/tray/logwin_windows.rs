@@ -302,11 +302,6 @@ impl LogWindow {
         }
     }
 
-    pub fn is_visible(&self) -> bool {
-        !self.hwnd.is_null()
-            && unsafe { IsWindowVisible(self.hwnd) != 0 && IsIconic(self.hwnd) == 0 }
-    }
-
     pub fn show(&mut self) {
         self.create();
         if self.hwnd.is_null() {
@@ -318,25 +313,6 @@ impl LogWindow {
             SetFocus(self.edit);
         }
         self.scroll_to_end();
-    }
-
-    pub fn hide(&mut self) {
-        if !self.hwnd.is_null() {
-            unsafe {
-                ShowWindow(self.hwnd, SW_HIDE);
-            }
-        }
-    }
-
-    /// Show or hide; returns whether the window is now visible.
-    pub fn toggle(&mut self) -> bool {
-        if self.is_visible() {
-            self.hide();
-            false
-        } else {
-            self.show();
-            true
-        }
     }
 
     pub fn destroy(&mut self) {

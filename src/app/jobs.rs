@@ -96,7 +96,7 @@ fn is_usable_audio(sh: &Shared, p: &Pipeline, pcm: &[i16]) -> bool {
 /// The overlay's feedback for a delivery.
 fn delivered_feedback(delivered: Option<Delivered>) -> Feedback {
     match delivered {
-        Some(Delivered::Pasted) => Feedback::Pasted,
+        Some(Delivered::Pasted | Delivered::Inserted) => Feedback::Pasted,
         Some(Delivered::Clipboard) => Feedback::Copied,
         None => Feedback::Error,
     }

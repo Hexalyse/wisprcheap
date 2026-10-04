@@ -33,15 +33,9 @@ pub enum UiEvent {
     LastAvailable(bool),
     FailedAvailable(bool),
     Paused(bool),
-    Month(String),
-    /// Sync status line; None hides the sync items (sync off).
-    Sync(Option<String>),
     Translations(Vec<String>, i32),
     Notify(String, String),
     ShowLog,
-    ToggleLog,
-    /// The log window was hidden by the user (Esc / close button).
-    LogHidden,
     /// What the recording overlay shows.
     Overlay(OverlayStatus),
     /// How a recording ended, shown for a moment by the overlay.
@@ -52,12 +46,12 @@ pub enum UiEvent {
 /// Actions chosen in the tray menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayAction {
+    OpenUi,
     CopyLast,
     RetryFailed,
     AddClipboard,
     TogglePause,
     Translate(i32),
-    SyncNow,
     OpenConfig,
     Restart,
     Quit,
@@ -98,14 +92,6 @@ impl Ui {
 
     pub fn set_paused(&self, v: bool) {
         self.send(UiEvent::Paused(v));
-    }
-
-    pub fn set_month(&self, text: &str) {
-        self.send(UiEvent::Month(one_line(text)));
-    }
-
-    pub fn set_sync(&self, line: Option<String>) {
-        self.send(UiEvent::Sync(line.map(|l| one_line(&l))));
     }
 
     pub fn set_translations(&self, labels: Vec<String>, selected: i32) {
@@ -180,20 +166,14 @@ struct Tray {
     menu: Menu,
     icons: Icons,
     status: MenuItem,
-    month: MenuItem,
-    show_log: MenuItem,
     copy_last: MenuItem,
     retry: MenuItem,
     pause: CheckMenuItem,
     translate: Option<(Submenu, PredefinedMenuItem, Vec<CheckMenuItem>)>,
-    /// Sync status line and "Sync now", under the month line when sync is on.
-    sync: Option<(MenuItem, MenuItem)>,
 }
 
-/// Position of the "Translate dictation" submenu in the menu (without the sync items).
-const TRANSLATE_POSITION: usize = 7;
-/// Position of the sync status line.
-const SYNC_POSITION: usize = 2;
+/// Position of the "Translate dictation" submenu in the menu.
+const TRANSLATE_POSITION: usize = 6;
 
 impl Tray {
     fn new(icon_dir: &std::path::Path) -> anyhow::Result<Self> {
@@ -205,8 +185,7 @@ impl Tray {
         };
         let menu = Menu::new();
         let status = MenuItem::with_id("status", "wisprcheap", false, None);
-        let month = MenuItem::with_id("month", "This month: -", false, None);
-        let show_log = MenuItem::with_id("show-log", "Show log", true, None);
+        let open_ui = MenuItem::with_id("open-ui", "Open WisprCheap", true, None);
         let copy_last = MenuItem::with_id("copy-last", "Copy last dictation", false, None);
         let retry = MenuItem::with_id("retry-failed", "Retry last failed", false, None);
         let add_clipboard =
@@ -217,9 +196,8 @@ impl Tray {
         let quit = MenuItem::with_id("quit", "Quit", true, None);
         menu.append_items(&[
             &status,
-            &month,
             &PredefinedMenuItem::separator(),
-            &show_log,
+            &open_ui,
             &copy_last,
             &retry,
             &PredefinedMenuItem::separator(),
@@ -244,38 +222,11 @@ impl Tray {
             menu,
             icons,
             status,
-            month,
-            show_log,
             copy_last,
             retry,
             pause,
             translate: None,
-            sync: None,
         })
-    }
-
-    fn translate_position(&self) -> usize {
-        TRANSLATE_POSITION + if self.sync.is_some() { 2 } else { 0 }
-    }
-
-    fn set_sync(&mut self, line: Option<&str>) {
-        match (line, &self.sync) {
-            (Some(text), Some((status, _))) => status.set_text(text),
-            (Some(text), None) => {
-                let status = MenuItem::with_id("sync-status", text, false, None);
-                let now = MenuItem::with_id("sync-now", "Sync now", true, None);
-                let _ = self.menu.insert(&status, SYNC_POSITION);
-                let _ = self.menu.insert(&now, SYNC_POSITION + 1);
-                self.sync = Some((status, now));
-            }
-            (None, Some(_)) => {
-                if let Some((status, now)) = self.sync.take() {
-                    let _ = self.menu.remove(&status);
-                    let _ = self.menu.remove(&now);
-                }
-            }
-            (None, None) => {}
-        }
     }
 
     fn set_state(&mut self, name: IconName, text: &str) {
@@ -315,7 +266,7 @@ impl Tray {
             items.push(item);
         }
         let separator = PredefinedMenuItem::separator();
-        let position = self.translate_position();
+        let position = TRANSLATE_POSITION;
         let _ = self.menu.insert(&submenu, position);
         let _ = self.menu.insert(&separator, position + 1);
         self.translate = Some((submenu, separator, items));
@@ -324,11 +275,11 @@ impl Tray {
 
 fn menu_action(id: &str) -> Option<TrayAction> {
     Some(match id {
+        "open-ui" => TrayAction::OpenUi,
         "copy-last" => TrayAction::CopyLast,
         "retry-failed" => TrayAction::RetryFailed,
         "add-clipboard" => TrayAction::AddClipboard,
         "toggle-pause" => TrayAction::TogglePause,
-        "sync-now" => TrayAction::SyncNow,
         "open-config" => TrayAction::OpenConfig,
         "restart" => TrayAction::Restart,
         "quit" => TrayAction::Quit,
@@ -346,19 +297,16 @@ pub fn run(
     let icon_dir: PathBuf = write_icons(&crate::paths::icon_dir());
 
     {
-        let ui = ui.clone();
         let actions = actions.clone();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             let id = event.id.0.as_str();
-            if id == "show-log" {
-                ui.send(UiEvent::ToggleLog);
-            } else if let Some(action) = menu_action(id) {
+            if let Some(action) = menu_action(id) {
                 let _ = actions.send(action);
             }
         }));
     }
     {
-        let ui = ui.clone();
+        let actions = actions.clone();
         TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
@@ -366,19 +314,13 @@ pub fn run(
                 ..
             } = event
             {
-                ui.send(UiEvent::ToggleLog);
+                let _ = actions.send(TrayAction::OpenUi);
             }
         }));
     }
 
     let mut tray: Option<Tray> = None;
-    let mut log_window = {
-        let ui = ui.clone();
-        logwin::LogWindow::new(
-            icon_dir.clone(),
-            Box::new(move || ui.send(UiEvent::LogHidden)),
-        )
-    };
+    let mut log_window = logwin::LogWindow::new(icon_dir.clone(), Box::new(|| {}));
     let notify_ui = ui.clone();
     let mut tray_failed = false;
     let mut overlay = Overlay::new();
@@ -407,11 +349,6 @@ pub fn run(
         let Event::UserEvent(event) = event else {
             return;
         };
-        let update_show_log = |tray: &Option<Tray>, visible: bool| {
-            if let Some(t) = tray {
-                t.show_log.set_text(if visible { "Hide log" } else { "Show log" });
-            }
-        };
         match event {
             UiEvent::State(name, text) => {
                 if let Some(t) = tray.as_mut() {
@@ -435,16 +372,6 @@ pub fn run(
                     t.pause.set_checked(v);
                 }
             }
-            UiEvent::Month(text) => {
-                if let Some(t) = &tray {
-                    t.month.set_text(&text);
-                }
-            }
-            UiEvent::Sync(line) => {
-                if let Some(t) = tray.as_mut() {
-                    t.set_sync(line.as_deref());
-                }
-            }
             UiEvent::Translations(labels, selected) => {
                 if let Some(t) = tray.as_mut() {
                     t.set_translations(&labels, selected);
@@ -455,15 +382,7 @@ pub fn run(
                     notify::show_error(&t.icon, &title, &message);
                 }
             }
-            UiEvent::ShowLog => {
-                log_window.show();
-                update_show_log(&tray, true);
-            }
-            UiEvent::ToggleLog => {
-                let visible = log_window.toggle();
-                update_show_log(&tray, visible);
-            }
-            UiEvent::LogHidden => update_show_log(&tray, false),
+            UiEvent::ShowLog => log_window.show(),
             UiEvent::Overlay(status) => overlay.set_status(status),
             UiEvent::OverlayFeedback(feedback) => overlay.feedback(feedback),
             UiEvent::Exit => {

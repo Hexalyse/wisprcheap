@@ -1,0 +1,15 @@
+[package]
+name = "wisprcheap-ui"
+version = "1.4.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "On-demand desktop settings and activity companion for WisprCheap"
+
+[dependencies]
+wisprcheap = { path = ".." }
+iced = { version = "0.14", default-features = false, features = ["tiny-skia", "tokio", "canvas", "x11", "wayland"] }
+chrono = "0.4"
+serde_json = "1"
+png = "0.18"
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync"] }

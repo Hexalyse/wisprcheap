@@ -1,11 +1,11 @@
-//! Command line: `wisprcheap [start|run|stop|devices|stats|shortcut|sounds|wayland]`.
+//! Command line: `wisprcheap [start|run|ui|stop|devices|stats|shortcut|sounds|wayland]`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 
 use crate::app::{self, RunOptions};
 use crate::config::{ConfigArgs, load_config, resolve_base_dir};
@@ -20,6 +20,7 @@ Usage: wisprcheap [command] [options]
 Commands:
   start       Start in the background, with the tray icon (default)
   run         Run in the foreground (logs in this terminal)
+  ui          Open the on-demand desktop companion (also works while stopped)
   stop        Quit the running instance
   devices     List audio input/output devices
   stats       Monthly cost summary from the history
@@ -32,7 +33,7 @@ Commands:
 Options:
   -c, --config <file>   Config file (default: config.yaml in the app directory, or WISPRCHEAP_CONFIG)
   --no-tray             run: no tray icon (Ctrl+C to quit)
-  --gui                 start: report through dialogs, show the log if already running";
+  --gui                 start: report through dialogs, open the companion if already running";
 
 struct Args {
     command: String,
@@ -103,6 +104,17 @@ pub fn main(gui_binary: bool) {
     let code = match args.command.as_str() {
         "run" => run(args),
         "start" => start(args),
+        "ui" => match runtime().block_on(open_companion(&args.config)) {
+            Ok(()) => 0,
+            Err(e) => {
+                if args.gui {
+                    message_box(&e.to_string(), true);
+                } else {
+                    eprintln!("{e}");
+                }
+                1
+            }
+        },
         "stop" => stop(),
         "devices" => devices(),
         "stats" => stats(&args),
@@ -135,6 +147,62 @@ fn runtime() -> tokio::runtime::Runtime {
         .enable_all()
         .build()
         .expect("tokio runtime")
+}
+
+/// Launch the separate GUI only on demand; focus the existing companion when possible.
+pub async fn open_companion(config: &ConfigArgs) -> Result<()> {
+    if crate::instance::send_command_at(
+        &crate::instance::ui_socket_name(),
+        "focus",
+        Duration::from_secs(1),
+    )
+    .await
+    .is_some()
+    {
+        return Ok(());
+    }
+    let exe = std::env::current_exe()?.with_file_name(if cfg!(windows) {
+        "wisprcheap-ui.exe"
+    } else {
+        "wisprcheap-ui"
+    });
+    if !exe.is_file() {
+        bail!(
+            "Desktop companion not found next to the app. Build it with `cargo build -p wisprcheap-ui`, or install the complete release archive."
+        );
+    }
+    let mut cmd = Command::new(exe);
+    if let Some(path) = &config.config {
+        cmd.args(["--config", path]);
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd.spawn()?;
+    Ok(())
+}
+
+/// The companion's executable is not the daemon: always select the sibling explicitly.
+pub async fn start_from_companion(config: ConfigArgs) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let exe = std::env::current_exe()?.with_file_name(if cfg!(windows) { "wisprcheap.exe" } else { "wisprcheap" });
+        if !exe.is_file() { bail!("Dictation executable not found beside the companion. Build the desktop workspace with `cargo build`."); }
+        let mut cmd = Command::new(exe);
+        cmd.arg("start").stdin(Stdio::null());
+        if let Some(path) = &config.config { cmd.args(["--config", path]); }
+        #[cfg(windows)] {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000);
+        }
+        let output = cmd.output()?;
+        if !output.status.success() { bail!("{}", String::from_utf8_lossy(&output.stderr).trim()); }
+        Ok(())
+    }).await?
 }
 
 // ---------------------------------------------------------------------------
@@ -307,7 +375,7 @@ fn start(args: Args) -> i32 {
     };
     let rt = runtime();
     rt.block_on(async {
-        let existing = send_command(if gui { "show-log" } else { "ping" }, Duration::from_secs(2)).await;
+        let existing = send_command(if gui { "show-ui" } else { "ping" }, Duration::from_secs(2)).await;
         if existing.is_some() {
             if !gui {
                 println!("wisprcheap is already running (see the tray icon). Use `wisprcheap stop` to quit it.");
@@ -483,7 +551,7 @@ fn shortcut(args: &Args) -> i32 {
             return 1;
         }
     };
-    let mut launch_args = vec!["start".to_string(), "--gui".to_string()];
+    let mut launch_args = vec!["ui".to_string(), "--gui".to_string()];
     launch_args.extend(
         args.passthrough
             .iter()

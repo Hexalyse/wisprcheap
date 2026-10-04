@@ -60,14 +60,17 @@ where
             .await
             .ok()?;
         let mut data = Vec::new();
-        let mut buf = [0u8; 256];
+        let mut buf = [0u8; 8192];
         loop {
             let n = stream.read(&mut buf).await.ok()?;
             if n == 0 {
                 break;
             }
             data.extend_from_slice(&buf[..n]);
-            if data.contains(&b'\n') {
+            if data.len() > crate::companion::MAX_MESSAGE {
+                return None;
+            }
+            if buf[..n].contains(&b'\n') {
                 break;
             }
         }
@@ -82,12 +85,20 @@ where
 
 /// Send one command. Returns the reply, or None when no instance is running.
 pub async fn send_command(command: &str, timeout: Duration) -> Option<String> {
+    send_command_at(&socket_name(), command, timeout).await
+}
+
+pub fn ui_socket_name() -> String {
+    format!("{}-ui", socket_name())
+}
+
+pub async fn send_command_at(name: &str, command: &str, timeout: Duration) -> Option<String> {
     #[cfg(windows)]
     {
         use tokio::net::windows::named_pipe::ClientOptions;
         let deadline = Instant::now() + timeout;
         let client = loop {
-            match ClientOptions::new().open(socket_name()) {
+            match ClientOptions::new().open(name) {
                 Ok(c) => break c,
                 // All pipe instances busy: the server is creating the next one.
                 Err(e) if e.raw_os_error() == Some(231) && Instant::now() < deadline => {
@@ -101,7 +112,7 @@ pub async fn send_command(command: &str, timeout: Duration) -> Option<String> {
     #[cfg(unix)]
     {
         let _ = Instant::now();
-        let stream = tokio::net::UnixStream::connect(socket_name()).await.ok()?;
+        let stream = tokio::net::UnixStream::connect(name).await.ok()?;
         Some(exchange(stream, command, timeout).await)
     }
 }
@@ -110,10 +121,12 @@ async fn serve_connection<S>(stream: S, requests: mpsc::UnboundedSender<Request>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
-    let mut reader = BufReader::new(stream);
+    let mut reader = BufReader::new(stream.take((crate::companion::MAX_MESSAGE + 1) as u64));
     let mut line = String::new();
     let read = tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line)).await;
-    if !matches!(read, Ok(Ok(n)) if n > 0) {
+    if !matches!(read, Ok(Ok(n)) if n > 0 && n <= crate::companion::MAX_MESSAGE)
+        || !line.ends_with('\n')
+    {
         return;
     }
     let (tx, rx) = oneshot::channel();
@@ -121,7 +134,15 @@ where
         return;
     }
     let reply = rx.await.unwrap_or_default();
-    let mut stream = reader.into_inner();
+    let reply = if reply.len() > crate::companion::MAX_MESSAGE {
+        crate::companion::Reply::Error(
+            "Response is too large. Narrow the history search or shorten the configuration.".into(),
+        )
+        .json()
+    } else {
+        reply
+    };
+    let mut stream = reader.into_inner().into_inner();
     let _ = stream.write_all(format!("{reply}\n").as_bytes()).await;
     let _ = stream.shutdown().await;
 }
@@ -148,9 +169,12 @@ impl Drop for Instance {
 }
 
 #[cfg(windows)]
-fn listen_once(requests: &mpsc::UnboundedSender<Request>) -> Result<Instance, AcquireError> {
+fn listen_once(
+    name: &str,
+    requests: &mpsc::UnboundedSender<Request>,
+) -> Result<Instance, AcquireError> {
     use tokio::net::windows::named_pipe::ServerOptions;
-    let name = socket_name();
+    let name = name.to_string();
     let first = ServerOptions::new()
         .first_pipe_instance(true)
         .create(&name)
@@ -185,8 +209,11 @@ fn listen_once(requests: &mpsc::UnboundedSender<Request>) -> Result<Instance, Ac
 }
 
 #[cfg(unix)]
-fn listen_once(requests: &mpsc::UnboundedSender<Request>) -> Result<Instance, AcquireError> {
-    let path = socket_name();
+fn listen_once(
+    name: &str,
+    requests: &mpsc::UnboundedSender<Request>,
+) -> Result<Instance, AcquireError> {
+    let path = name.to_string();
     // A live instance answers on the socket; a stale file from a crash doesn't.
     if std::os::unix::net::UnixStream::connect(&path).is_ok() {
         return Err(AcquireError::AlreadyRunning);
@@ -216,9 +243,17 @@ pub async fn acquire_instance(
     requests: mpsc::UnboundedSender<Request>,
     wait: Duration,
 ) -> Result<Instance, AcquireError> {
+    acquire_instance_at(socket_name(), requests, wait).await
+}
+
+pub async fn acquire_instance_at(
+    name: String,
+    requests: mpsc::UnboundedSender<Request>,
+    wait: Duration,
+) -> Result<Instance, AcquireError> {
     let deadline = Instant::now() + wait;
     loop {
-        match listen_once(&requests) {
+        match listen_once(&name, &requests) {
             Ok(instance) => return Ok(instance),
             Err(AcquireError::AlreadyRunning) if Instant::now() < deadline => {
                 tokio::time::sleep(Duration::from_millis(200)).await;

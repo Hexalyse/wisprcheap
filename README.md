@@ -5,7 +5,7 @@ hold **Ctrl + Win**, speak, release. The audio is transcribed (ElevenLabs Scribe
 cleaned up by a cheap LLM ("polish" pass), copied to the clipboard and pasted into the focused text field.
 
 This is a native Rust rewrite of the (now archived) [TypeScript/Node version](https://github.com/Hexalyse/wisprcheap-ts),
-with the same features, config file, prompts, history format and tray menu, in a single executable.
+with the same config file, prompts, history format and tray menu, plus an optional desktop companion.
 
 - Push-to-talk, or **double-tap** the hotkey for hands-free mode (tap again to stop)
 - **Command mode** (Ctrl + Win + Alt): select text and say "make this more formal", "translate to English"...,
@@ -18,22 +18,22 @@ with the same features, config file, prompts, history format and tray menu, in a
 - Short sound cues for start, stop, hands-free, command, cancel and error, plus a desktop notification when something fails
 - A small [overlay](#recording-overlay) at the bottom of the screen while recording (with a live waveform) and transcribing
 - `history.jsonl` log with raw and polished text, timings and estimated cost, plus `wisprcheap stats`
-- Runs in the background with a tray icon: status color, this month's estimated cost, log window, pause, retry a failed dictation...
+- Runs in the background with a tray icon: status color, log window, pause, retry a failed dictation...
 - Follows the default microphone and speakers (plug in a headset, it's used from the next dictation)
-- No settings UI: one YAML file, applied as soon as you save it
+- On-demand Iced desktop UI: visual settings, dictionary, translation pairs, searchable history and activity stats
 
 ## Download
 
 Prebuilt binaries for Windows and Linux (x86_64) are on the [releases page](https://github.com/Hexalyse/wisprcheap/releases).
 Extract the archive anywhere, then follow [Setup](#setup). On Linux, install the runtime libraries first
-(Debian/Ubuntu: `sudo apt install libgtk-3-0 libayatana-appindicator3-1 libasound2 libxdo3`).
+(Debian/Ubuntu: `sudo apt install libgtk-3-0 libayatana-appindicator3-1 libasound2 libxdo3 libxkbcommon0 libxkbcommon-x11-0`).
 
 Windows SmartScreen may warn about an unrecognized app the first time, because the executables aren't code-signed
 (**More info** > **Run anyway**).
 
 ## Build
 
-Requires Rust 1.85+ (edition 2024).
+Requires Rust 1.88+ for the desktop companion (edition 2024).
 
 **Windows**: nothing else (MSVC toolchain).
 
@@ -41,7 +41,8 @@ Requires Rust 1.85+ (edition 2024).
 
 ```sh
 sudo apt install build-essential pkg-config libgtk-3-dev libayatana-appindicator3-dev \
-  libasound2-dev libx11-dev libxtst-dev libxi-dev libxdo-dev libdbus-1-dev
+  libasound2-dev libx11-dev libxtst-dev libxi-dev libxdo-dev libdbus-1-dev \
+  libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev
 ```
 
 Then:
@@ -50,11 +51,13 @@ Then:
 cargo build --release
 ```
 
-This produces two executables in `target/release/`:
+This produces three executables in `target/release/`:
 
 - `wisprcheap`: the command line (and the app itself).
 - `wisprcheapw`: the same program without a console window on Windows. It's what the background instance and the
   desktop shortcut use. It makes no difference on Linux.
+- `wisprcheap-ui`: a separate Iced companion, created only when opened and exited when closed.
+  Keep it beside the dictation executables. `cargo build --release -p wisprcheap` builds only the background app.
 
 ## Setup
 
@@ -67,6 +70,10 @@ This produces two executables in `target/release/`:
    **Open config.yaml** in the tray creates it from the example if it doesn't exist.
 3. Run `wisprcheap shortcut` (optional: adds a desktop shortcut, and a menu entry on Linux), then `wisprcheap start`.
 4. Linux on Wayland: run `wisprcheap wayland` and follow the [one-time setup](#wayland) it prints.
+
+Alternatively, run `wisprcheap ui`, enter provider keys in **Settings**, save, then choose **Start dictation**.
+Keys entered in the UI are saved in your local YAML file. Existing `.env` keys and `${VAR}` references are preserved.
+See [desktop companion details](docs/desktop-ui.md) for architecture, current scope and validation notes.
 
 **Where files live.** If a `config.yaml` sits next to the executable, that directory is used (portable mode:
 config, `.env`, history, log, and a `.cache/` folder). Otherwise:
@@ -84,37 +91,41 @@ config, `.env`, history, log, and a `.cache/` folder). Otherwise:
 | `wisprcheap start`    | Start in the background and return (the default command; `--config <file>` to pick a config) |
 | `wisprcheap stop`     | Quit the running instance                                            |
 | `wisprcheap run`      | Run in the current terminal instead (Ctrl+C quits), still with the tray icon (`--no-tray` without) |
+| `wisprcheap ui`       | Open or focus the desktop companion; works while dictation is stopped |
 | `wisprcheap shortcut` | Create or update the desktop shortcut                                |
 | `wisprcheap wayland`  | Linux: check the keyboard access needed on Wayland and print the [setup](#wayland) |
 | `wisprcheap devices`  | List microphones (for `recording.device`) and speakers              |
 | `wisprcheap stats`    | Words, audio minutes and estimated cost per month                    |
 | `wisprcheap sounds`   | Play every sound cue                                                 |
 
-Only one instance runs at a time. Starting it again from the shortcut shows the log window. Output is written to
+Only one dictation instance and one companion run at a time. The desktop shortcut opens or focuses the companion.
+Re-run `wisprcheap shortcut` to update an older shortcut. Output is written to
 `wisprcheap.log` (rotated at 1 MB).
 
 ## Tray icon
 
 The icon color shows the state: **grey** ready, **red** recording, **amber** transcribing/polishing, **light grey with a slash** paused.
 
-The top of the menu shows the status and this month's estimated cost and word count (from `history.jsonl`, updated after each dictation).
+The top of the menu shows dictation status. Activity, costs and sync controls are in the companion UI.
 
-- **Left-click** (Windows) or **Show log** toggles the log window. Closing it, or pressing Esc, only hides it; the app keeps running.
+- **Left-click** (Windows) or **Open WisprCheap** opens the companion. Closing it exits the companion process; dictation keeps running.
 - **Copy last dictation** puts the last polished text back on the clipboard.
 - **Retry last failed** re-sends the last recording whose transcription failed (e.g. network or quota error).
   The result goes to the clipboard, since focus is on the tray at that moment.
 - **Translate dictation** (only shown when `translation.pairs` is set): pick a pair, or Off. The choice is remembered.
-- **Sync now** and the sync status line (only when [sync](#sync-optional) is set up).
 - **Add clipboard to dictionary** adds the copied word or phrase to `config.yaml`.
 - **Pause dictation** ignores the shortcuts until you resume.
 - **Open config.yaml** opens it in your default editor. Saved changes apply immediately.
 - **Restart** fully restarts the app (not needed for config changes).
-- **Quit** waits for a dictation in progress to finish, then exits.
+- **Quit** waits for a dictation in progress to finish, then exits and closes the companion. Unsaved settings retain their close confirmation.
 
 When something fails (transcription, command, translation, microphone, config reload...), a notification
 says what happened; click it to open the log. Turn it off with `notifications.errors: false`.
 
 ## Recording overlay
+
+The recording overlay remains the existing native Win32/GTK implementation. Iced runs only in the companion;
+the background executable does not depend on Iced, Winit or a webview.
 
 While you speak, a small pill at the bottom center of the screen (above the taskbar, on the screen of the focused
 window) shows a live waveform: red with a microphone for a dictation, indigo with sparkles for a command, plus a
@@ -187,7 +198,7 @@ List prices, September 2026. At about 140 words per minute, **10,000 words is ab
 | **Total (default)**           |                                | **~$0.34**       |
 
 Command mode is billed per command: about $0.0002 with gpt-6-luna, $0.003-0.005 with gpt-6-sol (low).
-`wisprcheap stats` shows your real numbers based on the history file, and the tray menu shows the current month's total.
+`wisprcheap stats` shows your real numbers based on the history file. The companion's Overview and History pages let you switch between **Current device** and **All devices** for the selected period. All-device history is loaded from sync on demand, including when `sync.history` is `upload`, and merged with local recordings without double-counting.
 
 Models missing from the built-in price table (or with other prices) can be listed in `config.yaml`:
 
@@ -218,7 +229,7 @@ readable by the server, so it can show them on its web page.
    copy of the previous file is kept (`config.yaml.bak-<date>`).
 
 Then the app syncs by itself: at startup, a few seconds after you save `config.yaml` or `.env`, after dictations,
-every 15 minutes, and from **Sync now** in the tray (which also shows the sync status). Changes from other devices
+every 15 minutes, and from **Sync now** in the companion's Overview (which also shows the sync status). Changes from other devices
 are written into `config.yaml` (comments and layout are kept) and API keys into `.env` next to it.
 
 What's synced: transcription, cleanup (polish), command and translation settings, the five API keys, the
@@ -263,7 +274,7 @@ section of `config.yaml`: keep that file private, like `.env`.
 - On X11, global hotkeys and key injection use XRecord / XTest, like the original libuiohook. No setup needed.
 - On Wayland, see [below](#wayland).
 - The tray uses AppIndicator / StatusNotifierItem. GNOME needs the "AppIndicator and KStatusNotifierItem Support" extension.
-  AppIndicators don't report left clicks: use **Show log** in the menu. Notifications go through D-Bus
+  AppIndicators don't report left clicks: use **Open WisprCheap** in the menu, then **Session log** for logs. Notifications go through D-Bus
   (`org.freedesktop.Notifications`).
 - Without a display, the app runs without the tray icon and logs why.
 - The [recording overlay](#recording-overlay) needs X11 and a compositor (for the transparency; most desktops have one).

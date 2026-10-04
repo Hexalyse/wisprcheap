@@ -278,8 +278,12 @@ impl Actor {
             }
             AppMsg::Tray(action) => self.on_tray(action).await,
             AppMsg::Pipe((command, reply)) => {
-                let answer = self.handle_command(&command);
-                let _ = reply.send(answer);
+                if let Some(json) = command.strip_prefix(crate::companion::PREFIX) {
+                    self.handle_ui_request(json, reply);
+                } else {
+                    let answer = self.handle_command(&command);
+                    let _ = reply.send(answer);
+                }
             }
             AppMsg::ScheduleReload => {
                 self.reload_gen += 1;
@@ -583,6 +587,16 @@ impl Actor {
 
     async fn on_tray(&mut self, action: TrayAction) {
         match action {
+            TrayAction::OpenUi => {
+                let args = self.opts.config_args.clone();
+                let shared = self.shared.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = crate::cli::open_companion(&args).await {
+                        crate::warn!("Could not open the desktop companion: {e}");
+                        shared.notify_error("Desktop companion", &e.to_string());
+                    }
+                });
+            }
             TrayAction::CopyLast => {
                 let sh = self.shared.clone();
                 tokio::spawn(async move { jobs::copy_last(&sh).await });
@@ -594,11 +608,93 @@ impl Actor {
                 self.set_paused(!paused);
             }
             TrayAction::Translate(index) => self.select_translation(index),
-            TrayAction::SyncNow => self.shared.sync.sync_now(),
             TrayAction::OpenConfig => self.open_config(),
             TrayAction::Restart => self.restart().await,
             TrayAction::Quit => self.quit().await,
         }
+    }
+
+    fn handle_ui_request(&mut self, json: &str, reply: tokio::sync::oneshot::Sender<String>) {
+        use crate::companion::{Reply, Request, RuntimeStatus};
+        let request: Request = match serde_json::from_str(json) {
+            Ok(request) => request,
+            Err(e) => {
+                let _ = reply.send(Reply::Error(format!("Invalid companion request: {e}")).json());
+                return;
+            }
+        };
+        let response = match request {
+            Request::Status => {
+                let pipeline = self.shared.pipeline();
+                let st = self.shared.status.lock().unwrap();
+                Reply::Status(RuntimeStatus {
+                    running: self.ready,
+                    paused: st.paused,
+                    recording: st.recording,
+                    pending: st.pending,
+                    label: if st.recording {
+                        "Recording".into()
+                    } else if st.pending > 0 {
+                        st.busy_label.clone()
+                    } else if st.paused {
+                        "Paused".into()
+                    } else {
+                        "Ready to dictate".into()
+                    },
+                    last_text: st.last_text.clone(),
+                    retry_available: st.last_failed.is_some(),
+                    sync: self.shared.sync.status().tray_line(),
+                    translation: st.state.translation.clone(),
+                    translations: pipeline.pairs.iter().map(|p| p.label.clone()).collect(),
+                })
+            }
+            Request::Pause { paused } => {
+                self.set_paused(paused);
+                Reply::Ok
+            }
+            Request::Translate { index } => {
+                if index < -1 || index >= self.shared.pipeline().pairs.len() as i32 {
+                    Reply::Error("Unknown translation pair".into())
+                } else {
+                    self.select_translation(index);
+                    Reply::Ok
+                }
+            }
+            Request::CopyLast => {
+                let _ = self.app_tx.send(AppMsg::Tray(TrayAction::CopyLast));
+                Reply::Ok
+            }
+            Request::RetryFailed => {
+                if self.shared.status.lock().unwrap().last_failed.is_none() {
+                    Reply::Error("No recording available to retry in this session".into())
+                } else {
+                    self.retry_failed();
+                    Reply::Ok
+                }
+            }
+            Request::SyncNow => {
+                if self.shared.sync.enabled() {
+                    self.shared.sync.sync_now();
+                    Reply::Ok
+                } else {
+                    Reply::Error("Sync is not connected. Set it up with `wisprcheap sync`.".into())
+                }
+            }
+            disk => {
+                let args = self.opts.config_args.clone();
+                let tx = self.app_tx.clone();
+                let is_save = matches!(disk, Request::Save { .. });
+                tokio::spawn(async move {
+                    let response = crate::companion::handle_request(args, disk).await;
+                    if is_save && matches!(response, Reply::Config(_)) {
+                        let _ = tx.send(AppMsg::ScheduleReload);
+                    }
+                    let _ = reply.send(response.json());
+                });
+                return;
+            }
+        };
+        let _ = reply.send(response.json());
     }
 
     fn handle_command(&mut self, command: &str) -> String {
@@ -624,6 +720,10 @@ impl Actor {
                     ui.show_log();
                 }
                 if has_ui { "ok" } else { "no-tray" }
+            }
+            "show-ui" => {
+                let _ = self.app_tx.send(AppMsg::Tray(TrayAction::OpenUi));
+                "ok"
             }
             // Same as the tray menu items (scriptable).
             "retry-failed" => {
@@ -838,6 +938,12 @@ impl Actor {
     async fn quit(&mut self) {
         info!("Quitting...");
         self.teardown().await;
+        let _ = crate::instance::send_command_at(
+            &crate::instance::ui_socket_name(),
+            "close",
+            Duration::from_secs(2),
+        )
+        .await;
         info!("Bye.");
         self.exit();
     }

@@ -50,7 +50,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential pkg-config libgtk-3-dev \
-            libayatana-appindicator3-dev libasound2-dev libx11-dev libxtst-dev libxi-dev libxdo-dev libdbus-1-dev
+            libayatana-appindicator3-dev libasound2-dev libx11-dev libxtst-dev libxi-dev libxdo-dev libdbus-1-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -70,7 +71,7 @@ jobs:
         run: |
           $name = "wisprcheap-$env:GITHUB_REF_NAME-${{ matrix.name }}"
           New-Item -ItemType Directory -Path "dist/$name" | Out-Null
-          Copy-Item target/release/wisprcheap.exe, target/release/wisprcheapw.exe, README.md, LICENSE, config.example.yaml, .env.example "dist/$name/"
+          Copy-Item target/release/wisprcheap.exe, target/release/wisprcheapw.exe, target/release/wisprcheap-ui.exe, README.md, LICENSE, config.example.yaml, .env.example "dist/$name/"
           Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
 
       - name: Package (Linux)
@@ -78,7 +79,7 @@ jobs:
         run: |
           name="wisprcheap-$GITHUB_REF_NAME-${{ matrix.name }}"
           mkdir -p "dist/$name"
-          cp target/release/wisprcheap README.md LICENSE config.example.yaml .env.example "dist/$name/"
+          cp target/release/wisprcheap target/release/wisprcheap-ui README.md LICENSE config.example.yaml .env.example "dist/$name/"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
 
       - uses: actions/upload-artifact@v7

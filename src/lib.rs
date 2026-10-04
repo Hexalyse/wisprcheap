@@ -8,6 +8,7 @@ pub mod audio;
 pub mod cli;
 pub mod clipboard;
 pub mod command;
+pub mod companion;
 pub mod config;
 pub mod dictionary;
 pub mod env_edit;

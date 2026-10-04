@@ -43,12 +43,12 @@ impl LogWindow {
         let window = gtk::Window::new(gtk::WindowType::Toplevel);
         window.set_title(&self.title);
         let (mut w, mut h) = (900, 560);
-        if let Some(display) = gdk::Display::default() {
-            if let Some(monitor) = display.primary_monitor().or_else(|| display.monitor(0)) {
-                let area = monitor.workarea();
-                w = area.width() * 55 / 100;
-                h = area.height() * 55 / 100;
-            }
+        if let Some(display) = gdk::Display::default()
+            && let Some(monitor) = display.primary_monitor().or_else(|| display.monitor(0))
+        {
+            let area = monitor.workarea();
+            w = area.width() * 55 / 100;
+            h = area.height() * 55 / 100;
         }
         window.set_default_size(w, h);
         window.set_position(gtk::WindowPosition::Center);
@@ -149,10 +149,6 @@ impl LogWindow {
         }
     }
 
-    pub fn is_visible(&self) -> bool {
-        self.widgets.as_ref().is_some_and(|w| w.window.is_visible())
-    }
-
     pub fn show(&mut self) {
         self.create();
         if let Some(w) = &self.widgets {
@@ -165,17 +161,6 @@ impl LogWindow {
     pub fn hide(&mut self) {
         if let Some(w) = &self.widgets {
             w.window.hide();
-        }
-    }
-
-    /// Show or hide; returns whether the window is now visible.
-    pub fn toggle(&mut self) -> bool {
-        if self.is_visible() {
-            self.hide();
-            false
-        } else {
-            self.show();
-            true
         }
     }
 

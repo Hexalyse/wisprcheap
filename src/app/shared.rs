@@ -124,19 +124,6 @@ pub struct Shared {
     pub sync: SyncHandle,
 }
 
-/// 1234567 -> "1,234,567"
-pub fn thousands(n: usize) -> String {
-    let s = n.to_string();
-    let mut out = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
-}
-
 /// JavaScript-like number formatting for log lines (600 -> "600", -Infinity -> "-Infinity").
 pub fn js_number(n: f64) -> String {
     if n == f64::NEG_INFINITY {
@@ -263,28 +250,6 @@ impl Shared {
             .map(|i| i as i32)
             .unwrap_or(-1);
         ui.set_translations(p.pairs.iter().map(|x| x.label.clone()).collect(), selected);
-        let month = p.history.current_month();
-        let month_name = Local::now().format("%B");
-        let money = |usd: f64| {
-            if usd < 0.01 && usd > 0.0 {
-                "<$0.01".to_string()
-            } else {
-                format!("~${usd:.2}")
-            }
-        };
-        let sync = self.sync.status();
-        let all_devices = sync
-            .month
-            .as_ref()
-            .filter(|_| sync.devices > 1)
-            .map(|m| format!(" (all devices: {})", money(m.total_usd)))
-            .unwrap_or_default();
-        ui.set_month(&format!(
-            "{month_name}: {} - {} words{all_devices}",
-            money(month.cost_usd),
-            thousands(month.words)
-        ));
-        ui.set_sync(sync.tray_line());
     }
 
     pub fn set_last_failed(&self, value: Option<LastFailed>) {
@@ -313,7 +278,7 @@ impl Shared {
         let _ = self.job_tx.send(job);
     }
 
-    /// Write the entry to the history and update the month total shown in the tray.
+    /// Write the entry to the history and notify sync.
     pub fn record(&self, p: &Pipeline, entry: &HistoryEntry) {
         let mut entry = entry.clone();
         if entry.id.is_none() {
@@ -323,7 +288,6 @@ impl Shared {
             entry.device = self.sync.device_id();
         }
         p.history.append(&entry);
-        self.refresh_tray();
         self.sync.history_appended();
     }
 
@@ -349,9 +313,6 @@ mod tests {
 
     #[test]
     fn formats_numbers() {
-        assert_eq!(thousands(0), "0");
-        assert_eq!(thousands(1234), "1,234");
-        assert_eq!(thousands(1234567), "1,234,567");
         assert_eq!(js_number(-55.0), "-55");
         assert_eq!(js_number(600.5), "600.5");
         assert_eq!(fixed(f64::NEG_INFINITY, 1), "-Infinity");

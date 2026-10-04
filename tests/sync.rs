@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use wisprcheap::config::{ConfigArgs, LoadedConfig, load_config_lenient};
+use wisprcheap::companion::{ActivityScope, Reply, Request, handle_request_at};
 use wisprcheap::sync::cli::{self, Prompt};
 use wisprcheap::sync::{SyncContext, SyncError, sync_once};
 use wisprcheap::yaml_edit::YamlText;
@@ -292,6 +293,8 @@ async fn scenario() {
     let b_device = first_b.device_id.clone();
     let mut new_entry = entry(Some("5f0c2a8e-1b3d-4e6f-8a9b-0c1d2e3f4a5b"), 4);
     new_entry = new_entry.replacen("{", &format!("{{\"device\":\"{b_device}\","), 1);
+    // Android's delivery method must also be accepted by desktop history/statistics.
+    new_entry = new_entry.replace("\"delivered\":\"pasted\"", "\"delivered\":\"inserted\"");
     let mut hist = b.text("history.jsonl");
     hist.push_str(&new_entry);
     std::fs::write(b.dir.join("history.jsonl"), hist).unwrap();
@@ -300,6 +303,42 @@ async fn scenario() {
     assert_eq!(up.month.as_ref().map(|m| m.entries), Some(3));
     let up = sync_once(&b.ctx).await.unwrap();
     assert_eq!(up.uploaded, 0);
+
+    // --- Companion reads account history automatically, including on upload-only A.
+    // An unsynced local entry is included, and legacy/uploaded/downloaded copies aren't counted twice.
+    let pending = entry(Some("d7c54367-e3fb-4eb4-8422-0fda8cac39ef"), 6);
+    std::fs::write(a.dir.join("history.jsonl"), format!("{}{pending}", a.text("history.jsonl"))).unwrap();
+    for (device, current_count, current_words) in [(&a, 3, 11), (&b, 1, 4)] {
+        let before_history = device.text("history.jsonl");
+        let before_config = device.text("config.yaml");
+        let before_state = std::fs::read(device.ctx.state_dir.join("state.json")).unwrap();
+        for scope in [ActivityScope::CurrentDevice, ActivityScope::AllDevices] {
+            let reply = handle_request_at(device.ctx.config_args.clone(), Request::Activity {
+                query: String::new(), errors_only: false, days: Some(7), scope,
+            }, device.ctx.state_dir.clone()).await;
+            let Reply::Activity(data) = reply else { panic!("{reply:?}"); };
+            let expected = if scope == ActivityScope::CurrentDevice {
+                (current_count, current_words)
+            } else if std::ptr::eq(device, &a) { (4, 15) } else { (3, 9) };
+            assert_eq!((data.totals.recordings, data.totals.words), expected);
+            let expected_cost = if scope == ActivityScope::CurrentDevice { current_count } else { expected.0 } as f64 * 0.0003;
+            assert!((data.totals.total_usd - expected_cost).abs() < 1e-10);
+            assert_eq!(data.scope, scope);
+            assert_eq!(data.daily.iter().map(|day| day.count).sum::<usize>(), expected.0);
+        }
+        assert_eq!(device.text("history.jsonl"), before_history);
+        assert_eq!(device.text("config.yaml"), before_config);
+        assert_eq!(std::fs::read(device.ctx.state_dir.join("state.json")).unwrap(), before_state);
+    }
+
+    // A key mismatch must produce an error, never local totals labelled as all-device totals.
+    let original_key = a.loaded().config.sync.key;
+    a.edit(|y| y.set(&["sync", "key"], &serde_yaml::Value::String(wisprcheap_sync::crypto::DataKey::generate().export())).unwrap());
+    let reply = handle_request_at(a.ctx.config_args.clone(), Request::Activity {
+        query: String::new(), errors_only: false, days: None, scope: ActivityScope::AllDevices,
+    }, a.ctx.state_dir.clone()).await;
+    assert!(matches!(reply, Reply::Error(ref message) if message.contains("unlock")), "{reply:?}");
+    a.edit(|y| y.set(&["sync", "key"], &serde_yaml::Value::String(original_key)).unwrap());
 
     // --- Unpairing B: the token is revoked and removed, the data stays.
     cli::unpair(&b.ctx).await.unwrap();
