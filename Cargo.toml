@@ -1,6 +1,6 @@
 [package]
 name = "wisprcheap"
-version = "1.4.0"
+version = "1.5.0"
 edition = "2024"
 license = "MIT"
 description = "Push-to-talk dictation: hold a hotkey, speak, and the cleaned-up text is pasted where you type."
@@ -67,6 +67,7 @@ windows-sys = { version = "0.61", features = [
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev = "0.13"
 gtk = "0.18"
+gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
 notify-rust = "4"
 rdev = "0.5"
 

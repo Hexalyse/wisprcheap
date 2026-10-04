@@ -51,7 +51,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential pkg-config libgtk-3-dev \
             libayatana-appindicator3-dev libasound2-dev libx11-dev libxtst-dev libxi-dev libxdo-dev libdbus-1-dev \
-            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libgtk-layer-shell-dev sway grim xvfb xauth
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -61,6 +61,10 @@ jobs:
 
       - name: Test
         run: cargo test --release --locked
+
+      - name: Test Wayland overlay
+        if: runner.os == 'Linux'
+        run: python3 tests/wayland_overlay.py --release
 
       - name: Build
         run: cargo build --release --locked

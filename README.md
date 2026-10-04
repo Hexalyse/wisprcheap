@@ -26,7 +26,7 @@ with the same config file, prompts, history format and tray menu, plus an option
 
 Prebuilt binaries for Windows and Linux (x86_64) are on the [releases page](https://github.com/Hexalyse/wisprcheap/releases).
 Extract the archive anywhere, then follow [Setup](#setup). On Linux, install the runtime libraries first
-(Debian/Ubuntu: `sudo apt install libgtk-3-0 libayatana-appindicator3-1 libasound2 libxdo3 libxkbcommon0 libxkbcommon-x11-0`).
+(Debian/Ubuntu: `sudo apt install libgtk-3-0 libayatana-appindicator3-1 libasound2 libxdo3 libxkbcommon0 libxkbcommon-x11-0 libgtk-layer-shell0`).
 
 Windows SmartScreen may warn about an unrecognized app the first time, because the executables aren't code-signed
 (**More info** > **Run anyway**).
@@ -42,7 +42,7 @@ Requires Rust 1.88+ for the desktop companion (edition 2024).
 ```sh
 sudo apt install build-essential pkg-config libgtk-3-dev libayatana-appindicator3-dev \
   libasound2-dev libx11-dev libxtst-dev libxi-dev libxdo-dev libdbus-1-dev \
-  libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev
+  libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libgtk-layer-shell-dev
 ```
 
 Then:
@@ -124,11 +124,11 @@ says what happened; click it to open the log. Turn it off with `notifications.er
 
 ## Recording overlay
 
-The recording overlay remains the existing native Win32/GTK implementation. Iced runs only in the companion;
-the background executable does not depend on Iced, Winit or a webview.
+The recording overlay uses native Win32/GTK windows, with Layer Shell on supported Wayland compositors.
+Iced runs only in the companion; the background executable does not depend on Iced, Winit or a webview.
 
-While you speak, a small pill at the bottom center of the screen (above the taskbar, on the screen of the focused
-window) shows a live waveform: red with a microphone for a dictation, indigo with sparkles for a command, plus a
+While you speak, a small pill at the bottom center of the screen (above the taskbar or panel)
+shows a live waveform: red with a microphone for a dictation, indigo with sparkles for a command, plus a
 padlock in hands-free mode. It then shrinks to a spinner while the audio is transcribed and polished, and briefly shows
 how it went: a check (pasted), a clipboard (only copied), a crossed-out microphone (nothing heard) or a shaking "!" (error).
 
@@ -268,6 +268,9 @@ section of `config.yaml`: keep that file private, like `.env`.
   (needs access to `/dev/uinput`, e.g. as root).
   `WISPRCHEAP_NO_INJECT=1` never sends Ctrl+C / Ctrl+V, and `WISPRCHEAP_INSTANCE=<name>` runs a separate instance,
   which is useful for manual end-to-end tests next to a real instance.
+- On Linux, `python3 tests/wayland_overlay.py` checks the actual native Wayland overlay in an isolated Sway
+  session (install `sway grim xvfb xauth` first). It verifies click-through, focus, hide/show and scaling,
+  and writes screenshots and protocol logs to `target/wayland-overlay/`. The Linux release workflow runs it too.
 
 ### Linux notes
 
@@ -277,8 +280,11 @@ section of `config.yaml`: keep that file private, like `.env`.
   AppIndicators don't report left clicks: use **Open WisprCheap** in the menu, then **Session log** for logs. Notifications go through D-Bus
   (`org.freedesktop.Notifications`).
 - Without a display, the app runs without the tray icon and logs why.
-- The [recording overlay](#recording-overlay) needs X11 and a compositor (for the transparency; most desktops have one).
-  Wayland doesn't let apps place their windows, so it isn't shown there (the log says so).
+- The [recording overlay](#recording-overlay) works on X11 with compositing and on Wayland compositors that
+  support Layer Shell (KDE Plasma, Sway, Hyprland and others). On Wayland, the compositor chooses the monitor;
+  the pill is anchored at the bottom center, respects space reserved by panels, and doesn't take focus or intercept clicks.
+  Compositors without Layer Shell, including GNOME, omit the overlay and explain why in the log; dictation still works.
+  Linux requires GTK Layer Shell 0.6 or newer (`libgtk-layer-shell0` on Debian/Ubuntu).
 - The clipboard works on X11 and Wayland (data-control protocol, with XWayland's clipboard as the fallback).
 
 ### Wayland

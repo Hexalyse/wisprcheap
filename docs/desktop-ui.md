@@ -12,6 +12,11 @@ The optional UI polls runtime status every two seconds while open. History, conf
 on blocking workers, outside the dictation actor. The history view returns at most 200 matching entries;
 statistics cover all entries in the selected period. Refresh reloads activity and logs.
 
+The recording overlay uses the existing software renderer in native Win32/GTK windows. On Wayland,
+GTK Layer Shell anchors it above normal windows while preserving click-through and keyboard focus.
+The compositor selects the output; compositors without Layer Shell omit the overlay and log the reason.
+Linux build/runtime packages include GTK Layer Shell 0.6 or newer.
+
 Settings is one continuous form with section headings and a persistent menu beside it.
 Menu items scroll to their section; scrolling the form updates the highlighted menu item.
 Anchors use measured layout heights so wrapped text, microphone lists and resizing stay accurate.
@@ -59,6 +64,10 @@ Checked on Windows/MSVC and Ubuntu 24.04 in the isolated `WisprCheapBuild` WSL d
 - Desktop workspace builds on both platforms; Windows release binaries are in `target/release`.
 - Unit tests, sync integration, companion IPC integration and Clippy with warnings denied pass on both platforms.
 - Seven pages render and export screenshots on Windows, Linux/X11 and headless Weston/Wayland.
+- The native Wayland recording overlay is checked in isolated Sway: recording, command/hands-free,
+  processing and feedback render correctly; clicks pass through, focus stays in the underlying window,
+  hide/show works, and changing to 2× scale resizes the native pixel buffer. Unsupported compositor
+  fallback is checked under headless Weston. `python3 tests/wayland_overlay.py` runs the Sway check.
 - Real Windows daemon/companion smoke test verifies status, pause, validated saves, stale-edit rejection,
   malformed requests, translation selection, reopening the same window and process exit on window close.
   Dictation remains responsive after the companion exits. Fixtures use test keys and disable keyboard injection.
