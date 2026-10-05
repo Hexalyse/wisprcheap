@@ -1,0 +1,10 @@
+<form method="get" class="filters card">
+  <label>From <input type="date" name="from" value="{{ filter.from }}"></label>
+  <label>Through <input type="date" name="to" value="{{ filter.to }}"></label>
+  <label>Device <select name="device"><option value="">All devices</option>{% for d in filter.devices %}<option value="{{ d.0 }}" {% if filter.device == d.0 %}selected{% endif %}>{{ d.1 }}</option>{% endfor %}</select></label>
+  <label>Provider <input name="provider" value="{{ filter.provider }}" placeholder="All providers" maxlength="100"></label>
+  <label>Model <input name="model" value="{{ filter.model }}" placeholder="All models" maxlength="100"></label>
+  <label>Status <select name="status"><option value="">All statuses</option><option value="ok" {% if filter.status == "ok" %}selected{% endif %}>Successful</option><option value="failed" {% if filter.status == "failed" %}selected{% endif %}>Failed</option><option value="empty" {% if filter.status == "empty" %}selected{% endif %}>Empty</option></select></label>
+  <div class="filter-actions"><button>Apply filters</button><a href="?">Reset</a><a href="/history.csv?{{ query }}">Export CSV</a></div>
+  <p class="muted filter-note">Dates use {{ timezone }} · <a href="/account">Change timezone</a>. Provider and model match exact names. CSV exports include up to 10,000 matching entries.</p>
+</form>

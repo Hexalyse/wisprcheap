@@ -57,3 +57,36 @@ tr.failed td:last-child { color: var(--danger); }
 .code { font-size: 32px; font-weight: 700; letter-spacing: 4px; font-family: ui-monospace, Consolas, monospace; }
 code { font-family: ui-monospace, Consolas, monospace; background: var(--bg); padding: 2px 6px; border-radius: 6px; }
 .copy code { user-select: all; word-break: break-all; }
+nav a[aria-current="page"] { color: var(--accent); font-weight: 700; text-decoration: underline; text-underline-offset: 5px; }
+select { width: 100%; margin-top: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--fg); font: inherit; }
+.filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 16px; }
+.filter-actions, .filter-note { grid-column: 1 / -1; }
+.filter-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+.filter-note { margin: 4px 0 0; }
+.warning { color: var(--warn); }
+.device-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.device-card { min-width: 0; border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.device-card.revoked { opacity: .7; }
+.device-card dl { margin: 12px 0; }
+.device-card dt { color: var(--muted); font-size: 13px; }
+.device-card dd { margin: 0 0 8px; overflow-wrap: anywhere; }
+.device-card .rename { display: flex; flex-wrap: wrap; gap: 8px; }
+.device-card .rename input { flex: 1; min-width: 120px; width: 100%; margin: 0; }
+.device-card .rename button { flex-shrink: 0; }
+.copy { overflow-wrap: anywhere; }
+.pair-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+@media (max-width: 600px) {
+  header { padding: 12px 16px; }
+  nav { gap: 8px 14px; }
+  nav form { flex-basis: 100%; }
+  main { padding: 16px; }
+  .card { padding: 16px; }
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .tile { padding: 12px; }
+  .tile .big { font-size: 23px; overflow-wrap: anywhere; }
+  .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .device-list { grid-template-columns: 1fr; }
+  form.row { flex-wrap: wrap; }
+  .narrow { margin: 12px auto; }
+  .code { font-size: 26px; }
+}

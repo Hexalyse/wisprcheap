@@ -10,7 +10,7 @@ use serde_json::Value;
 use wisprcheap_sync::crypto::DataKey;
 use wisprcheap_sync::hlc::{Clock, Hlc};
 use wisprcheap_sync::profile::{KIND_DICT, KIND_HISTORY, KIND_PAIR, KIND_PRICE, KIND_SECRET};
-use wisprcheap_sync::protocol::{Change, MonthStats, PushStatus};
+use wisprcheap_sync::protocol::{Change, MonthStats, PushStatus, SyncReportRequest, push_batch_len};
 use wisprcheap_sync::stats::HistoryStats;
 
 use crate::config::{ConfigArgs, LoadedConfig, SyncHistoryMode, load_config_lenient};
@@ -48,10 +48,9 @@ impl fmt::Display for SyncError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SyncError::Disabled => write!(f, "sync is not set up (see `wisprcheap sync pair`)"),
-            SyncError::Unauthorized => write!(
-                f,
-                "this device was disconnected from the server; pair it again with `wisprcheap sync pair`"
-            ),
+            SyncError::Unauthorized => {
+                write!(f, "this device was disconnected from the server; pair it again with `wisprcheap sync pair`")
+            }
             SyncError::NeedsKey(m) | SyncError::Network(m) | SyncError::Server(m) | SyncError::Local(m) => {
                 write!(f, "{m}")
             }
@@ -87,6 +86,8 @@ pub struct SyncOutcome {
     pub pushed: BTreeMap<String, usize>,
     pub uploaded: usize,
     pub downloaded: usize,
+    /// Fetched or queued changes still waiting for a local write or upload.
+    pub pending: usize,
     /// This month, every device.
     pub month: Option<MonthStats>,
     pub devices: usize,
@@ -112,11 +113,10 @@ impl SyncOutcome {
         if self.downloaded > 0 {
             parts.push(format!("added {} history entr(ies) from other devices", self.downloaded));
         }
-        if parts.is_empty() {
-            "up to date".into()
-        } else {
-            parts.join(", ")
+        if self.pending > 0 {
+            parts.push(format!("{} change(s) waiting to sync", self.pending));
         }
+        if parts.is_empty() { "up to date".into() } else { parts.join(", ") }
     }
 }
 
@@ -134,19 +134,11 @@ fn kind_label(kind: &str, n: usize) -> String {
 
 /// "12 settings updated from the server, 3 dictionary terms uploaded" (first sync summary).
 pub fn describe_counts(counts: &BTreeMap<String, usize>) -> String {
-    counts
-        .iter()
-        .filter(|(_, n)| **n > 0)
-        .map(|(k, n)| kind_label(k, *n))
-        .collect::<Vec<_>>()
-        .join(", ")
+    counts.iter().filter(|(_, n)| **n > 0).map(|(k, n)| kind_label(k, *n)).collect::<Vec<_>>().join(", ")
 }
 
 fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 fn hlc_ge(a: &str, b: &str) -> bool {
@@ -163,11 +155,7 @@ fn value_hash(dk: &DataKey, v: &Value) -> String {
 
 /// Id of a history entry written before sync (SPEC.md section 6).
 pub fn legacy_entry_id(device: &str, ts: &str) -> String {
-    uuid::Uuid::new_v5(
-        &uuid::Uuid::NAMESPACE_URL,
-        format!("wisprcheap:{device}:{ts}").as_bytes(),
-    )
-    .to_string()
+    uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, format!("wisprcheap:{device}:{ts}").as_bytes()).to_string()
 }
 
 fn is_set_kind(kind: &str) -> bool {
@@ -192,11 +180,7 @@ fn diff_local(
             continue;
         }
         let hash = value_hash(dk, &rec.value);
-        if st
-            .snapshot
-            .get(key)
-            .is_some_and(|s| !s.deleted && s.hash == hash)
-        {
+        if st.snapshot.get(key).is_some_and(|s| !s.deleted && s.hash == hash) {
             continue;
         }
         let hlc = clock.now(now_ms()).to_string();
@@ -211,14 +195,7 @@ fn diff_local(
             device: None,
             stats: None,
         });
-        st.snapshot.insert(
-            key.clone(),
-            Snap {
-                hlc,
-                hash,
-                deleted: false,
-            },
-        );
+        st.snapshot.insert(key.clone(), Snap { hlc, hash, deleted: false });
         queued += 1;
     }
     let gone: Vec<String> = st
@@ -247,14 +224,7 @@ fn diff_local(
             device: None,
             stats: None,
         });
-        st.snapshot.insert(
-            key.clone(),
-            Snap {
-                hlc,
-                hash: String::new(),
-                deleted: true,
-            },
-        );
+        st.snapshot.insert(key.clone(), Snap { hlc, hash: String::new(), deleted: true });
         queued += 1;
     }
     queued
@@ -280,10 +250,7 @@ pub async fn sync_once(ctx: &SyncContext) -> Result<SyncOutcome, SyncError> {
     })?;
     let mut st = SyncState::load(&ctx.state_dir);
     if st.server != server {
-        st = SyncState {
-            server: server.clone(),
-            ..Default::default()
-        };
+        st = SyncState { server: server.clone(), ..Default::default() };
     }
     if st.key_id != dk.key_id() {
         st.reset_data();
@@ -293,11 +260,7 @@ pub async fn sync_once(ctx: &SyncContext) -> Result<SyncOutcome, SyncError> {
         ctx,
         client: Client::new(&server, &sc.token),
         dk,
-        clock: Clock::new(if st.device_id.is_empty() {
-            "dev_unknown".to_string()
-        } else {
-            st.device_id.clone()
-        }),
+        clock: Clock::new(if st.device_id.is_empty() { "dev_unknown".to_string() } else { st.device_id.clone() }),
         out: SyncOutcome::default(),
     };
     if let Some(h) = Hlc::parse(&st.hlc) {
@@ -305,9 +268,7 @@ pub async fn sync_once(ctx: &SyncContext) -> Result<SyncOutcome, SyncError> {
     }
     let result = run.run(&mut st, loaded).await;
     st.hlc = run.clock.last().to_string();
-    if let Err(e) = st.save(&ctx.state_dir) {
-        crate::warn!("[sync] can't save the sync state: {e}");
-    }
+    st.save(&ctx.state_dir).map_err(local_err)?;
     result.map(|()| run.out)
 }
 
@@ -324,24 +285,19 @@ impl Run<'_> {
         let sc = loaded.config.sync.clone();
         // 0. Local edits since the last sync, before any network call (so an edit made offline gets
         //    an HLC close to when it was made).
-        let pending_keys = |st: &SyncState| -> HashSet<String> {
-            st.pending.iter().map(|c| record_key(&c.kind, &c.id)).collect()
-        };
+        let pending_keys =
+            |st: &SyncState| -> HashSet<String> { st.pending.iter().map(|c| record_key(&c.kind, &c.id)).collect() };
         if st.initialized && !st.device_id.is_empty() {
             let skip = pending_keys(st);
             diff_local(&loaded, &self.dk, st, &mut self.clock, &skip);
-            let _ = st.save(&self.ctx.state_dir);
+            st.save(&self.ctx.state_dir).map_err(local_err)?;
         }
 
         let me = self.client.me().await?;
         if st.device_id != me.device.id || st.user_id != me.user.id {
             // Paired again (or another account): start over.
             let (server, key_id) = (st.server.clone(), st.key_id.clone());
-            *st = SyncState {
-                server,
-                key_id,
-                ..Default::default()
-            };
+            *st = SyncState { server, key_id, ..Default::default() };
             st.device_id = me.device.id.clone();
             st.user_id = me.user.id.clone();
             self.clock = Clock::new(me.device.id.clone());
@@ -352,7 +308,8 @@ impl Run<'_> {
         match &me.keyring {
             None => {
                 return Err(SyncError::NeedsKey(
-                    "the encryption was reset on the server; run `wisprcheap sync unlock` to set a new sync passphrase".into(),
+                    "the encryption was reset on the server; run `wisprcheap sync unlock` to set a new sync passphrase"
+                        .into(),
                 ));
             }
             Some(k) if k.key_id != self.dk.key_id() => {
@@ -374,10 +331,10 @@ impl Run<'_> {
 
         // 1. Pull.
         let mut incoming: BTreeMap<String, Change> = BTreeMap::new();
-        for c in std::mem::take(&mut st.pending) {
+        for c in st.pending.clone() {
             incoming.insert(record_key(&c.kind, &c.id), c);
         }
-        let mut history_in: Vec<Change> = Vec::new();
+        let history_file = crate::paths::resolve(&loaded.base_dir, &loaded.config.history.path);
         loop {
             let page = self.client.pull(st.cursor, PAGE, !download).await?;
             for c in page.changes {
@@ -386,7 +343,7 @@ impl Run<'_> {
                 }
                 if c.kind == KIND_HISTORY {
                     if download && !c.deleted && c.device.as_deref() != Some(st.device_id.as_str()) {
-                        history_in.push(c);
+                        st.history_inbox.push(c);
                     }
                     continue;
                 }
@@ -398,26 +355,42 @@ impl Run<'_> {
                 incoming.insert(key, c);
             }
             st.cursor = page.next_since;
+            // The cursor and encrypted inbox are one atomic state file. A later network or
+            // write failure cannot discard records already fetched from the server.
+            st.pending = incoming.values().cloned().collect();
+            st.save(&self.ctx.state_dir).map_err(local_err)?;
+            if download {
+                let (added, remaining) = self.download_history(st, &history_file, &st.history_inbox)?;
+                self.out.downloaded += added;
+                st.history_inbox = remaining;
+                st.save(&self.ctx.state_dir).map_err(local_err)?;
+            }
             if !page.has_more {
                 break;
             }
         }
         // A queued local change and a remote one on the same record: the newer wins.
-        incoming.retain(|key, c| {
-            match st.outbox.iter().position(|o| &record_key(&o.kind, &o.id) == key) {
-                Some(i) if hlc_ge(&st.outbox[i].hlc, &c.hlc) => false,
-                Some(i) => {
-                    st.outbox.remove(i);
-                    true
-                }
-                None => true,
+        incoming.retain(|key, c| match st.outbox.iter().position(|o| &record_key(&o.kind, &o.id) == key) {
+            Some(i) if hlc_ge(&st.outbox[i].hlc, &c.hlc) => false,
+            Some(i) => {
+                st.outbox.remove(i);
+                true
             }
+            None => true,
         });
 
         // 2-4. Decrypt, merge (first sync) and write back.
         let changes: Vec<Change> = incoming.into_values().collect();
         let mut loaded = loaded;
-        if self.apply(st, &mut loaded, changes, first)? {
+        st.pending.clear();
+        let files_changed = match self.apply(st, &mut loaded, changes.clone(), first) {
+            Ok(changed) => changed,
+            Err(e) => {
+                st.pending.extend(changes);
+                return Err(e);
+            }
+        };
+        if files_changed {
             loaded = load(&self.ctx.config_args)?;
         }
 
@@ -425,16 +398,30 @@ impl Run<'_> {
         //    values the write-back normalised.
         let skip = pending_keys(st);
         diff_local(&loaded, &self.dk, st, &mut self.clock, &skip);
-        let _ = st.save(&self.ctx.state_dir);
+        st.save(&self.ctx.state_dir).map_err(local_err)?;
 
         // 6. Push.
-        let mut stale: Vec<Change> = Vec::new();
+        let mut saw_stale = false;
         while !st.outbox.is_empty() {
-            let batch: Vec<Change> = st.outbox.iter().take(PAGE).cloned().collect();
+            let candidates: Vec<Change> = st
+                .outbox
+                .iter()
+                .filter(|c| c.payload.as_ref().is_none_or(|p| p.len() <= MAX_PAYLOAD))
+                .take(PAGE)
+                .cloned()
+                .collect();
+            if candidates.is_empty() {
+                self.warn(format!(
+                    "{} changes are too large to upload (maximum encrypted payload: 64 KiB); they remain pending",
+                    st.outbox.len()
+                ));
+                break;
+            }
+            let count = push_batch_len(&candidates);
+            let batch: Vec<Change> = candidates.into_iter().take(count).collect();
             let resp = self.client.push(&batch).await?;
             for (sent, r) in batch.iter().zip(resp.results) {
-                st.outbox
-                    .retain(|o| !(o.kind == sent.kind && o.id == sent.id && o.hlc == sent.hlc));
+                st.outbox.retain(|o| !(o.kind == sent.kind && o.id == sent.id && o.hlc == sent.hlc));
                 match r.status {
                     PushStatus::Applied | PushStatus::Exists => {
                         *self.out.pushed.entry(sent.kind.clone()).or_default() += 1;
@@ -444,7 +431,8 @@ impl Run<'_> {
                             if let Some(h) = Hlc::parse(&cur.hlc) {
                                 self.clock.observe(&h);
                             }
-                            stale.push(cur);
+                            st.pending.push(cur);
+                            saw_stale = true;
                         }
                     }
                     PushStatus::Rejected => {
@@ -460,19 +448,22 @@ impl Run<'_> {
                     }
                 }
             }
+            st.save(&self.ctx.state_dir).map_err(local_err)?;
         }
-        if !stale.is_empty() {
+        if saw_stale {
             let mut loaded2 = load(&self.ctx.config_args)?;
-            self.apply(st, &mut loaded2, stale, false)?;
+            let pending = std::mem::take(&mut st.pending);
+            if let Err(e) = self.apply(st, &mut loaded2, pending.clone(), false) {
+                st.pending.extend(pending);
+                return Err(e);
+            }
+            st.save(&self.ctx.state_dir).map_err(local_err)?;
         }
 
         // 7-8. History.
         if history_on {
             let file = crate::paths::resolve(&loaded.base_dir, &loaded.config.history.path);
             self.out.uploaded = self.upload_history(st, &file).await?;
-            if download {
-                self.out.downloaded = self.download_history(st, &file, history_in);
-            }
         }
 
         // 9. This month's totals, every device.
@@ -488,7 +479,22 @@ impl Run<'_> {
         }
 
         st.initialized = true;
-        st.last_sync = Some(crate::history::iso_timestamp(chrono::Utc::now()));
+        self.out.pending = st.pending.len() + st.history_inbox.len() + st.outbox.len();
+        if self.out.pending == 0 {
+            st.last_sync = Some(crate::history::iso_timestamp(chrono::Utc::now()));
+        }
+        st.save(&self.ctx.state_dir).map_err(local_err)?;
+        if me.capabilities.sync_report {
+            let report = SyncReportRequest {
+                uploaded: (self.out.uploaded + self.out.pushed.values().sum::<usize>()) as u64,
+                downloaded: (self.out.downloaded + self.out.applied.values().sum::<usize>()) as u64,
+                pending: self.out.pending as u64,
+                app_version: env!("CARGO_PKG_VERSION").into(),
+            };
+            if let Err(e) = self.client.report_sync(&report).await {
+                self.warn(format!("couldn't report the completed sync: {e}"));
+            }
+        }
         Ok(())
     }
 
@@ -524,6 +530,7 @@ impl Run<'_> {
                     Ok(v) => Some(v),
                     Err(e) => {
                         self.warn(format!("can't decrypt {}/{}: {e}", c.kind, c.id));
+                        st.pending.push(c);
                         continue;
                     }
                 }
@@ -551,11 +558,7 @@ impl Run<'_> {
         }
         let list: Vec<Incoming> = decoded
             .iter()
-            .map(|(c, v)| Incoming {
-                kind: c.kind.clone(),
-                id: c.id.clone(),
-                value: v.clone(),
-            })
+            .map(|(c, v)| Incoming { kind: c.kind.clone(), id: c.id.clone(), value: v.clone() })
             .collect();
         let mut failed: HashSet<String> = HashSet::new();
         let mut files_changed = false;
@@ -646,11 +649,9 @@ impl Run<'_> {
             match r.status {
                 PushStatus::Applied => n += 1,
                 PushStatus::Exists | PushStatus::Stale => {}
-                PushStatus::Rejected => self.warn(format!(
-                    "history entry {} refused: {}",
-                    r.id,
-                    r.error.unwrap_or_default()
-                )),
+                PushStatus::Rejected => {
+                    self.warn(format!("history entry {} refused: {}", r.id, r.error.unwrap_or_default()))
+                }
             }
         }
         Ok(n)
@@ -687,7 +688,14 @@ impl Run<'_> {
                 continue;
             }
             if let Some(change) = self.history_change(st, line) {
-                batch_bytes += change.payload.as_ref().map(String::len).unwrap_or(0) + 800;
+                let change_bytes = serde_json::to_vec(&change).map_err(local_err)?.len() + 1;
+                if !batch.is_empty() && batch_bytes + change_bytes > wisprcheap_sync::protocol::TARGET_PUSH_BYTES {
+                    uploaded += self.push_history(&batch).await?;
+                    batch.clear();
+                    batch_bytes = 0;
+                    st.history_offset = (pos - line.len()) as u64;
+                }
+                batch_bytes += change_bytes;
                 batch.push(change);
             }
             if batch.len() >= 200 || batch_bytes > 600_000 {
@@ -703,18 +711,31 @@ impl Run<'_> {
     }
 
     /// Appends the other devices' entries to `history.jsonl` (`sync.history: download`).
-    fn download_history(&mut self, st: &SyncState, file: &Path, changes: Vec<Change>) -> usize {
+    fn download_history(
+        &mut self,
+        st: &SyncState,
+        file: &Path,
+        changes: &[Change],
+    ) -> Result<(usize, Vec<Change>), SyncError> {
         if changes.is_empty() {
-            return 0;
+            return Ok((0, Vec::new()));
         }
-        let known: HashSet<String> = std::fs::read_to_string(file)
-            .unwrap_or_default()
+        let existing = match std::fs::read_to_string(file) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(local_err(format!("can't read {}: {e}", file.display()))),
+        };
+        let mut known: HashSet<String> = existing
             .lines()
             .filter_map(|l| serde_json::from_str::<Value>(l).ok())
             .filter_map(|v| v.get("id").and_then(Value::as_str).map(String::from))
             .collect();
         let mut text = String::new();
+        if !existing.is_empty() && !existing.ends_with('\n') {
+            text.push('\n');
+        }
         let mut added = 0;
+        let mut remaining = Vec::new();
         for c in changes {
             if known.contains(&c.id) {
                 continue;
@@ -726,6 +747,7 @@ impl Run<'_> {
                 Ok(v) => v,
                 Err(e) => {
                     self.warn(format!("can't decrypt history entry {}: {e}", c.id));
+                    remaining.push(c.clone());
                     continue;
                 }
             };
@@ -738,23 +760,22 @@ impl Run<'_> {
             text.push_str(&entry.to_string());
             text.push('\n');
             added += 1;
+            known.insert(c.id.clone());
         }
         if added == 0 {
-            return 0;
+            return Ok((0, remaining));
         }
         let result = (|| -> std::io::Result<()> {
             if let Some(dir) = file.parent() {
                 std::fs::create_dir_all(dir)?;
             }
             let mut f = std::fs::OpenOptions::new().create(true).append(true).open(file)?;
-            f.write_all(text.as_bytes())
+            f.write_all(text.as_bytes())?;
+            f.sync_data()
         })();
         match result {
-            Ok(()) => added,
-            Err(e) => {
-                self.warn(format!("can't add history entries to {}: {e}", file.display()));
-                0
-            }
+            Ok(()) => Ok((added, remaining)),
+            Err(e) => Err(local_err(format!("can't add history entries to {}: {e}", file.display()))),
         }
     }
 }

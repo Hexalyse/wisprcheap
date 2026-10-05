@@ -37,8 +37,13 @@
 </section>
 <section class="card">
   <h2>Server</h2>
-  <p>Version {{ version }} · database {{ db_size }} · public URL <code>{{ public_url }}</code></p>
+  <p>Version {{ version }} · database {{ db_size }} including WAL and shared-memory files · public URL <code>{{ public_url }}</code></p>
+  <p><strong>{{ readiness }}</strong> · <a href="/readyz">Readiness check</a></p>
+  <p>Last backup attempt: {{ backup_attempt }} UTC<br>Last successful backup: {{ backup_success }} UTC</p>
+  {% if let Some(error) = backup_error %}<p class="error">Last backup failed: {{ error }}</p>{% endif %}
   <p class="muted">Back up with <code>wisprcheap-server backup</code> (consistent copy while running).</p>
+  <p>History retention: {{ history_retention }}<br>Audit retention: {{ audit_retention }}<br>Last cleanup: {{ last_cleanup }} UTC</p>
+  <p class="muted">Expired sessions, invitations, and pairing codes are cleaned up automatically. Configure history and audit retention with WCS_HISTORY_RETENTION_DAYS and WCS_AUDIT_RETENTION_DAYS (0 keeps all data). History retention removes server copies and keeps deletion markers; device-local history is retained.</p>
 </section>
 <section class="card">
   <h2>Activity (all users)</h2>

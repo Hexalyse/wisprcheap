@@ -6,6 +6,16 @@
 {% if let Some(e) = error %}<p class="error">{{ e }}</p>{% endif %}
 
 <section class="card">
+  <h2>Timezone</h2>
+  <p class="muted">Dashboard months, date filters, history, and device times use this preference. It accounts for daylight saving time.</p>
+  <form method="post" action="/account/timezone" class="row">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Timezone <select name="timezone" id="timezone">{% for tz in timezones %}<option value="{{ tz }}" {% if timezone.as_str() == tz.as_str() %}selected{% endif %}>{{ tz }}</option>{% endfor %}</select></label>
+    <button>Save timezone</button>
+  </form>
+</section>
+
+<section class="card">
   <h2>Password</h2>
   <form method="post" action="/account/password">
     <input type="hidden" name="csrf" value="{{ csrf }}">

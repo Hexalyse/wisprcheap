@@ -17,30 +17,28 @@
   {% if devices.is_empty() %}
   <p class="muted">No device yet.</p>
   {% else %}
-  <table>
-    <tr><th>Name</th><th>Platform</th><th>App</th><th>Paired</th><th>Last seen</th><th></th></tr>
+  <div class="device-list">
     {% for d in devices %}
-    <tr class="{% if d.revoked %}revoked{% endif %}">
-      <td>
-        {% if d.revoked %}{{ d.name }}{% else %}
-        <form method="post" action="/devices/{{ d.id }}/rename" class="inline">
-          <input type="hidden" name="csrf" value="{{ csrf }}">
-          <input name="name" value="{{ d.name }}" maxlength="60" aria-label="Device name"><button class="small">Rename</button>
-        </form>
-        {% endif %}
-      </td>
-      <td>{{ d.platform }}</td><td>{{ d.version }}</td><td>{{ d.paired }}</td><td>{{ d.last_seen }}</td>
-      <td>
-        {% if d.revoked %}revoked {{ d.revoked_at }}{% else %}
-        <form method="post" action="/devices/{{ d.id }}/revoke" class="inline">
-          <input type="hidden" name="csrf" value="{{ csrf }}">
-          <button class="danger small">Revoke</button>
-        </form>
-        {% endif %}
-      </td>
-    </tr>
+    <article class="device-card {% if d.revoked %}revoked{% endif %}">
+      {% if d.revoked %}<h3>{{ d.name }}</h3>{% else %}
+      <form method="post" action="/devices/{{ d.id }}/rename" class="rename">
+        <input type="hidden" name="csrf" value="{{ csrf }}"><input name="name" value="{{ d.name }}" maxlength="60" required aria-label="Device name"><button class="small">Rename</button>
+      </form>
+      {% endif %}
+      <dl>
+        <dt>Platform / app</dt><dd>{{ d.platform }} / {{ d.version }}</dd>
+        <dt>Last successful sync</dt><dd>{{ d.last_sync }}</dd>
+        <dt>Last reported cycle</dt><dd>{{ d.uploaded }} uploaded · {{ d.downloaded }} downloaded{% if d.pending > 0 %}<br><strong class="warning">{{ d.pending }} changes waiting to be applied or uploaded</strong>{% endif %}</dd>
+        <dt>Last contact</dt><dd>{{ d.last_seen }}</dd>
+        <dt>Paired</dt><dd>{{ d.paired }}</dd>
+      </dl>
+      {% if d.revoked %}<p class="muted">Revoked {{ d.revoked_at }}</p>{% else %}
+      <form method="post" action="/devices/{{ d.id }}/revoke"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="danger small">Revoke device</button></form>
+      {% endif %}
+    </article>
     {% endfor %}
-  </table>
+  </div>
+  <p class="muted">Contact means a request reached the server. Successful sync means an updated app finished a cycle with no pending changes. Older apps only report contact.</p>
   {% endif %}
 </section>
 {% endblock %}

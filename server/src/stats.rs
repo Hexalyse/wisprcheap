@@ -21,7 +21,14 @@ pub struct Row {
 impl Row {
     /// Server price when known, else the client's estimate.
     pub fn total(&self) -> f64 {
-        self.cost_total.or(self.stats.cost_total).or(self.cost_stt).or(self.stats.cost_stt).unwrap_or(0.0)
+        let stt = self.cost_stt.or(self.stats.cost_stt);
+        let llm = self.cost_llm.or(self.stats.cost_llm);
+        if stt.is_some() && (self.stats.llm_model.is_none() || llm.is_some()) {
+            stt.unwrap_or(0.0) + llm.unwrap_or(0.0)
+        } else {
+            let known = stt.unwrap_or(0.0) + llm.unwrap_or(0.0);
+            self.stats.cost_total.unwrap_or(known).max(known)
+        }
     }
     pub fn stt(&self) -> f64 {
         self.cost_stt.or(self.stats.cost_stt).unwrap_or(0.0)
@@ -30,8 +37,54 @@ impl Row {
         self.cost_llm.or(self.stats.cost_llm).unwrap_or(0.0)
     }
     pub fn unknown_price(&self) -> bool {
-        self.cost_stt.is_none() && self.stats.cost_stt.is_none()
+        (self.cost_stt.is_none() && self.stats.cost_stt.is_none())
+            || (self.stats.llm_model.is_some() && self.cost_llm.is_none() && self.stats.cost_llm.is_none())
     }
+}
+
+/// Store numeric reporting fields once, rather than decoding every history JSON on every page.
+pub fn index_history(conn: &Connection, user_id: &str, id: &str, stats: &HistoryStats) -> Result<()> {
+    let timestamp = DateTime::parse_from_rfc3339(&stats.ts)?;
+    let (stt, llm, total) = stats.recomputed_costs();
+    let row = Row {
+        entry_id: id.into(),
+        device_id: None,
+        stats: stats.clone(),
+        cost_stt: stt,
+        cost_llm: llm,
+        cost_total: total,
+    };
+    conn.execute(
+        "UPDATE history_stats SET timestamp_ms=?3, ts=?4, mode=?5, status=?6, provider=?7, stt_model=?8, llm_model=?9, \
+         words=?10, duration_sec=?11, stt_ms=?12, llm_ms=?13, resolved_stt=?14, resolved_llm=?15, resolved_total=?16, unknown_price=?17, \
+         cost_stt=?18, cost_llm=?19, cost_total=?20 WHERE user_id=?1 AND entry_id=?2",
+        params![user_id, id, timestamp.timestamp_millis(), timestamp.with_timezone(&Utc).to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            stats.mode, stats.status, stats.stt_provider, stats.stt_model, stats.llm_model,
+            stats.words.min(i64::MAX as u64) as i64, stats.duration_sec, stats.stt_ms.min(i64::MAX as u64) as i64, stats.llm_ms.map(|v| v.min(i64::MAX as u64) as i64), row.stt(), row.llm(), row.total(), row.unknown_price() as i64,
+            stt, llm, total],
+    )?;
+    Ok(())
+}
+
+pub fn backfill(conn: &Connection) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    {
+        let mut stmt = tx.prepare("SELECT user_id, entry_id, stats FROM history_stats")?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let user: String = row.get(0)?;
+            let id: String = row.get(1)?;
+            let json: String = row.get(2)?;
+            if let Ok(stats) = serde_json::from_str::<HistoryStats>(&json)
+                && let Err(e) = index_history(&tx, &user, &id, &stats)
+            {
+                tracing::warn!("history {id} could not be indexed: {e}");
+            }
+        }
+    }
+    crate::db::meta_set(&tx, "stats_index_v1", "1")?;
+    tx.commit()?;
+    Ok(())
 }
 
 /// Entries of a user between two UTC timestamps (ISO strings), newest first.
@@ -41,7 +94,14 @@ pub fn rows(conn: &Connection, user_id: &str, from_iso: &str, to_iso: &str, limi
          WHERE user_id = ?1 AND deleted = 0 AND ts >= ?2 AND ts < ?3 ORDER BY ts DESC LIMIT ?4",
     )?;
     let rows = stmt.query_map(params![user_id, from_iso, to_iso, limit], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?, r.get::<_, String>(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, Option<String>>(1)?,
+            r.get::<_, String>(2)?,
+            r.get(3)?,
+            r.get(4)?,
+            r.get(5)?,
+        ))
     })?;
     let mut out = Vec::new();
     for row in rows {
@@ -61,7 +121,8 @@ pub fn month_of(ts: &str, offset_min: i64) -> Option<String> {
 
 /// First instant (UTC ISO) of month `YYYY-MM` in the given offset.
 pub fn month_start_iso(month: &str, offset_min: i64) -> Option<String> {
-    let t = DateTime::parse_from_rfc3339(&format!("{month}-01T00:00:00Z")).ok()?.with_timezone(&Utc) - Duration::minutes(offset_min);
+    let t = DateTime::parse_from_rfc3339(&format!("{month}-01T00:00:00Z")).ok()?.with_timezone(&Utc)
+        - Duration::minutes(offset_min);
     Some(t.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
 }
 

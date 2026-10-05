@@ -1,18 +1,22 @@
 {% extends "base.html" %}
 {% block title %}Pair a device · WisprCheap sync{% endblock %}
 {% block content %}
-<section class="card narrow center">
+<section class="card narrow center" data-pair-status="/devices/pair/status?code={{ raw_code }}" data-expires="{{ expires_s }}">
   <h1>Pair a device</h1>
   <p class="muted">Valid until {{ expires }}, usable once.</p>
+  <p id="pair-feedback" class="muted" role="status" aria-live="polite">Waiting for your device.</p>
   <div class="qr">{{ qr|safe }}</div>
-  <p class="code">{{ code }}</p>
+  <p id="pair-code" class="code">{{ code }}</p>
+  <div class="pair-actions"><button class="secondary small pair-action" type="button" data-copy="pair-code">Copy code</button><a class="button pair-action" href="{{ link }}">Open WisprCheap</a></div>
   <h2>Android</h2>
   <p>Scan the QR code with the phone's camera, or open WisprCheap → Settings → Sync and enter
-  <code>{{ public_url }}</code> and the code.</p>
+  <code id="server-url">{{ public_url }}</code> and the code.</p>
+  <button class="secondary small" type="button" data-copy="server-url">Copy server URL</button>
   <h2>Desktop</h2>
-  <p class="copy"><code>wisprcheap sync pair {{ public_url }} {{ code }}</code></p>
+  <p class="copy"><code id="pair-command">wisprcheap sync pair {{ public_url }} {{ code }}</code></p>
+  <button class="secondary small pair-action" type="button" data-copy="pair-command">Copy desktop command</button>
   <p class="muted">The first device of an account creates the sync passphrase; the others ask for it.
   It encrypts your API keys, settings and dictated text before they leave the device: the server can't read them.</p>
-  <p><a class="button" href="/devices">Done</a></p>
+  <p><a class="button" href="/devices">Back to devices</a></p>
 </section>
 {% endblock %}

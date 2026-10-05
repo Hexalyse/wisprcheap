@@ -7,6 +7,11 @@ use crate::stats::HistoryStats;
 
 pub const API_PREFIX: &str = "/v1";
 pub const TOKEN_PREFIX: &str = "wcs_";
+pub const MAX_REQUEST_BYTES: usize = 1024 * 1024;
+pub const MAX_PAYLOAD_BYTES: usize = 64 * 1024;
+pub const MAX_PUSH_RECORDS: usize = 500;
+pub const TARGET_PUSH_BYTES: usize = 768 * 1024;
+pub const MAX_PULL_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,6 +74,25 @@ pub struct MeResponse {
     pub server_time: String,
     pub server_version: String,
     pub keyring: Option<Keyring>,
+    #[serde(default)]
+    pub capabilities: Capabilities,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Capabilities {
+    #[serde(default)]
+    pub sync_report: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncReportRequest {
+    pub uploaded: u64,
+    pub downloaded: u64,
+    #[serde(default)]
+    pub pending: u64,
+    pub app_version: String,
 }
 
 /// Body of `PUT /v1/keyring` (create; or replace with `If-Match: <keyVersion>`).
@@ -122,6 +146,22 @@ pub struct ChangesResponse {
 #[serde(rename_all = "camelCase")]
 pub struct PushRequest {
     pub changes: Vec<Change>,
+}
+
+/// A prefix whose actual UTF-8 JSON size fits comfortably below the request limit.
+/// Individual oversized records must be handled by the caller before using this helper.
+pub fn push_batch_len(changes: &[Change]) -> usize {
+    let mut bytes = b"{\"changes\":[]}".len();
+    let mut count = 0;
+    for change in changes.iter().take(MAX_PUSH_RECORDS) {
+        let size = serde_json::to_vec(change).expect("serializable change").len() + usize::from(count > 0);
+        if count > 0 && bytes + size > TARGET_PUSH_BYTES {
+            break;
+        }
+        bytes += size;
+        count += 1;
+    }
+    count
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,7 +226,7 @@ pub struct MonthStats {
     pub stt_usd: f64,
     pub llm_usd: f64,
     pub total_usd: f64,
-    /// Entries whose model has no known price (counted as $0).
+    /// Non-failed entries missing a price/estimate for either applicable STT or LLM component.
     pub unknown_price: u64,
     pub by_device: Vec<DeviceMonth>,
 }
@@ -197,4 +237,35 @@ pub struct StatsResponse {
     /// Newest first.
     pub months: Vec<MonthStats>,
     pub devices: Vec<DeviceInfo>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn batches_count_serialized_utf8_and_json_escaping() {
+        let changes: Vec<_> = (0..30)
+            .map(|id| Change {
+                kind: "setting".into(),
+                id: id.to_string(),
+                hlc: "0".into(),
+                payload: Some("\"é\\".repeat(10_000)),
+                seq: None,
+                deleted: false,
+                device: None,
+                stats: None,
+            })
+            .collect();
+        let mut remaining = changes.as_slice();
+        let mut batches = 0;
+        while !remaining.is_empty() {
+            let count = push_batch_len(remaining);
+            assert!(count > 0 && count < 30);
+            let body = serde_json::to_vec(&PushRequest { changes: remaining[..count].to_vec() }).unwrap();
+            assert!(body.len() <= TARGET_PUSH_BYTES && body.len() < MAX_REQUEST_BYTES);
+            remaining = &remaining[count..];
+            batches += 1;
+        }
+        assert!(batches > 1);
+    }
 }

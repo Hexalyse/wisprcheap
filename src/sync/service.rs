@@ -81,31 +81,17 @@ pub struct SyncHandle {
 impl SyncHandle {
     /// A handle that does nothing (tests, or no runtime).
     pub fn inert() -> Self {
-        Self {
-            tx: None,
-            status: Arc::default(),
-        }
+        Self { tx: None, status: Arc::default() }
     }
 
     /// Starts the sync task. `on_status` is called (from the task) whenever the status changes.
-    pub fn spawn(
-        ctx: SyncContext,
-        enabled: bool,
-        on_status: impl Fn() + Send + Sync + 'static,
-    ) -> Self {
+    pub fn spawn(ctx: SyncContext, enabled: bool, on_status: impl Fn() + Send + Sync + 'static) -> Self {
         let status = Arc::new(Mutex::new(SyncStatus {
-            device_id: if enabled {
-                state::device_id(&ctx.state_dir)
-            } else {
-                None
-            },
+            device_id: if enabled { state::device_id(&ctx.state_dir) } else { None },
             ..Default::default()
         }));
         let (tx, rx) = mpsc::unbounded_channel();
-        let handle = Self {
-            tx: Some(tx),
-            status: status.clone(),
-        };
+        let handle = Self { tx: Some(tx), status: status.clone() };
         tokio::spawn(task(ctx, enabled, rx, status, Arc::new(on_status)));
         handle
     }
@@ -139,11 +125,7 @@ impl SyncHandle {
     /// Device id for new history entries (None when sync is off).
     pub fn device_id(&self) -> Option<String> {
         let st = self.status.lock().unwrap();
-        if st.phase == Phase::Off {
-            None
-        } else {
-            st.device_id.clone()
-        }
+        if st.phase == Phase::Off { None } else { st.device_id.clone() }
     }
 }
 
@@ -231,10 +213,14 @@ async fn task(
                         failures = 0;
                         log_outcome(&outcome, secs);
                         let device = Some(outcome.device_id.clone());
+                        let last_sync = state::SyncState::load(&ctx.state_dir)
+                            .last_sync
+                            .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                            .map(|at| at.with_timezone(&Local));
                         set(&|s| {
-                            s.phase = Phase::Ok;
-                            s.last_sync = Some(Local::now());
-                            s.message.clear();
+                            s.phase = if outcome.pending == 0 { Phase::Ok } else { Phase::Error };
+                            s.last_sync = last_sync;
+                            s.message = if outcome.pending == 0 { String::new() } else { outcome.summary() };
                             s.device_id = device.clone();
                             s.month = outcome.month.clone();
                             s.devices = outcome.devices;
@@ -282,11 +268,7 @@ async fn task(
 
 fn human(d: Duration) -> String {
     let s = d.as_secs();
-    if s < 90 {
-        format!("{s} s")
-    } else {
-        format!("{} min", s.div_ceil(60))
-    }
+    if s < 90 { format!("{s} s") } else { format!("{} min", s.div_ceil(60)) }
 }
 
 fn log_outcome(o: &SyncOutcome, secs: f64) {
@@ -300,11 +282,7 @@ fn log_outcome(o: &SyncOutcome, secs: f64) {
         if !pushed.is_empty() {
             parts.push(format!("{pushed} uploaded"));
         }
-        let what = if parts.is_empty() {
-            "nothing to merge".to_string()
-        } else {
-            parts.join(", ")
-        };
+        let what = if parts.is_empty() { "nothing to merge".to_string() } else { parts.join(", ") };
         crate::info!("[sync] First sync done: {what} ({secs:.1} s).");
     } else {
         let summary = o.summary();

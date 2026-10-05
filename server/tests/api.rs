@@ -25,7 +25,13 @@ impl T {
         Self { app: wisprcheap_server::app(state.clone()), state, _dir: dir }
     }
 
-    async fn call(&self, method: &str, uri: &str, headers: &[(&str, &str)], body: Body) -> (StatusCode, HeaderMap, String) {
+    async fn call(
+        &self,
+        method: &str,
+        uri: &str,
+        headers: &[(&str, &str)],
+        body: Body,
+    ) -> (StatusCode, HeaderMap, String) {
         let mut req = Request::builder().method(method).uri(uri);
         for (k, v) in headers {
             req = req.header(*k, *v);
@@ -56,13 +62,24 @@ impl T {
     async fn pair(&self, user_id: &str, name: &str) -> String {
         let code = db::create_pairing_code(&self.state.db.lock(), user_id, None).unwrap().0;
         let (status, body) = self
-            .api("POST", "/v1/pair", "", Some(json!({"code": code, "name": name, "platform": "android", "appVersion": "0.2.0"})))
+            .api(
+                "POST",
+                "/v1/pair",
+                "",
+                Some(json!({"code": code, "name": name, "platform": "android", "appVersion": "0.2.0"})),
+            )
             .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         body["token"].as_str().unwrap().to_string()
     }
 
-    async fn form(&self, uri: &str, cookie: Option<&str>, origin: bool, fields: &[(&str, &str)]) -> (StatusCode, HeaderMap, String) {
+    async fn form(
+        &self,
+        uri: &str,
+        cookie: Option<&str>,
+        origin: bool,
+        fields: &[(&str, &str)],
+    ) -> (StatusCode, HeaderMap, String) {
         let body = fields.iter().map(|(k, v)| format!("{k}={}", urlencode(v))).collect::<Vec<_>>().join("&");
         let cookie_header = cookie.map(|c| format!("wcs_session={c}"));
         let mut headers = vec![("content-type", "application/x-www-form-urlencoded")];
@@ -82,9 +99,8 @@ impl T {
     }
 
     async fn login(&self, username: &str) -> String {
-        let (status, headers, _) = self
-            .form("/login", None, true, &[("username", username), ("password", "a long enough password")])
-            .await;
+        let (status, headers, _) =
+            self.form("/login", None, true, &[("username", username), ("password", "a long enough password")]).await;
         assert_eq!(status, StatusCode::SEE_OTHER);
         session_cookie(&headers).expect("session cookie")
     }
@@ -92,7 +108,13 @@ impl T {
 
 fn urlencode(v: &str) -> String {
     v.bytes()
-        .map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
         .collect()
 }
 
@@ -137,10 +159,19 @@ async fn pairing_and_me() {
     // A code works once, and is accepted typed as "abcd-2345".
     let code = db::create_pairing_code(&t.state.db.lock(), &alice, Some("Laptop")).unwrap().0;
     let typed = format!("{}-{}", code[..4].to_lowercase(), &code[4..]);
-    let (status, body) = t.api("POST", "/v1/pair", "", Some(json!({"code": typed, "name": "x", "platform": "windows", "appVersion": "1.2.0"}))).await;
+    let (status, body) = t
+        .api(
+            "POST",
+            "/v1/pair",
+            "",
+            Some(json!({"code": typed, "name": "x", "platform": "windows", "appVersion": "1.2.0"})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["device"]["name"], "Laptop", "the name given in the web UI wins");
-    let (status, body) = t.api("POST", "/v1/pair", "", Some(json!({"code": code, "name": "x", "platform": "windows", "appVersion": "1"}))).await;
+    let (status, body) = t
+        .api("POST", "/v1/pair", "", Some(json!({"code": code, "name": "x", "platform": "windows", "appVersion": "1"})))
+        .await;
     assert_eq!((status, body["error"].as_str()), (StatusCode::NOT_FOUND, Some("invalid_code")));
 
     assert_eq!(t.api("GET", "/v1/me", "wcs_nope", None).await.0, StatusCode::UNAUTHORIZED);
@@ -163,7 +194,12 @@ async fn keyring_rules() {
         async move {
             let auth = format!("Bearer {token}");
             let (status, _, text) = t
-                .call("PUT", "/v1/keyring", &[("content-type", "application/json"), ("authorization", &auth), ("if-match", if_match)], Body::from(body.to_string()))
+                .call(
+                    "PUT",
+                    "/v1/keyring",
+                    &[("content-type", "application/json"), ("authorization", &auth), ("if-match", if_match)],
+                    Body::from(body.to_string()),
+                )
                 .await;
             (status, serde_json::from_str::<Value>(&text).unwrap_or(Value::Null))
         }
@@ -204,7 +240,10 @@ async fn last_writer_wins_and_paging() {
     assert_eq!(r["results"][0]["status"], "applied");
     // Too far in the future: rejected.
     let (_, r) = t.api("POST", "/v1/changes", &laptop, Some(change(hlc(now + 3_600_000, "dev_b"), "e1.x"))).await;
-    assert_eq!((r["results"][0]["status"].as_str(), r["results"][0]["error"].as_str()), (Some("rejected"), Some("clock_skew")));
+    assert_eq!(
+        (r["results"][0]["status"].as_str(), r["results"][0]["error"].as_str()),
+        (Some("rejected"), Some("clock_skew"))
+    );
 
     let bad = json!({"changes": [
         {"kind": "nope", "id": "a", "hlc": hlc(now, "dev_a"), "payload": "e1.x"},
@@ -214,7 +253,8 @@ async fn last_writer_wins_and_paging() {
         {"kind": "dict", "id": "abcdefghijklmnopqrstuv", "hlc": hlc(now, "dev_a"), "payload": "plain text"},
     ]});
     let (_, r) = t.api("POST", "/v1/changes", &phone, Some(bad)).await;
-    let errors: Vec<_> = r["results"].as_array().unwrap().iter().map(|x| x["error"].as_str().unwrap().to_string()).collect();
+    let errors: Vec<_> =
+        r["results"].as_array().unwrap().iter().map(|x| x["error"].as_str().unwrap().to_string()).collect();
     assert_eq!(errors, ["invalid_kind", "invalid_id", "invalid_hlc", "missing_payload", "payload_too_large"]);
 
     // Two more records, then paging.
@@ -231,7 +271,10 @@ async fn last_writer_wins_and_paging() {
     let (_, page2) = t.api("GET", &format!("/v1/changes?since={since}&limit=2"), &phone, None).await;
     assert_eq!(page2["hasMore"], false);
     let last = &page2["changes"][0];
-    assert_eq!((last["kind"].as_str(), last["deleted"].as_bool(), last["payload"].is_null()), (Some("dict"), Some(true), true));
+    assert_eq!(
+        (last["kind"].as_str(), last["deleted"].as_bool(), last["payload"].is_null()),
+        (Some("dict"), Some(true), true)
+    );
 }
 
 #[tokio::test]
@@ -249,7 +292,14 @@ async fn history_is_immutable_and_counted() {
     assert_eq!(r["results"][0]["status"], "applied");
     let (_, r) = t.api("POST", "/v1/changes", &phone, Some(entry(false))).await;
     assert_eq!(r["results"][0]["status"], "exists");
-    let (_, r) = t.api("POST", "/v1/changes", &phone, Some(json!({"changes": [{"kind": "history", "id": id, "hlc": hlc(now_ms(), "dev_a"), "payload": "e1.x"}]}))).await;
+    let (_, r) = t
+        .api(
+            "POST",
+            "/v1/changes",
+            &phone,
+            Some(json!({"changes": [{"kind": "history", "id": id, "hlc": hlc(now_ms(), "dev_a"), "payload": "e1.x"}]})),
+        )
+        .await;
     assert_eq!(r["results"][0]["status"], "exists", "stats are not re-validated for an existing entry");
     let (_, r) = t.api("POST", "/v1/changes", &phone, Some(json!({"changes": [{"kind": "history", "id": "11111111-2222-3333-4444-555555555555", "hlc": hlc(now_ms(), "dev_a"), "payload": "e1.x"}]}))).await;
     assert_eq!(r["results"][0]["error"], "invalid_stats");
@@ -280,12 +330,20 @@ async fn users_are_isolated() {
     let bob = t.user("bob", false);
     let a = t.pair(&alice, "Alice phone").await;
     let b = t.pair(&bob, "Bob phone").await;
-    let change = json!({"changes": [{"kind": "secret", "id": "openai", "hlc": hlc(now_ms(), "dev_a"), "payload": "e1.alice"}]});
+    let change =
+        json!({"changes": [{"kind": "secret", "id": "openai", "hlc": hlc(now_ms(), "dev_a"), "payload": "e1.alice"}]});
     t.api("POST", "/v1/changes", &a, Some(change)).await;
     let (_, feed) = t.api("GET", "/v1/changes", &b, None).await;
     assert!(feed["changes"].as_array().unwrap().is_empty());
     // Same record id for Bob: an independent record, not a conflict with Alice's.
-    let (_, r) = t.api("POST", "/v1/changes", &b, Some(json!({"changes": [{"kind": "secret", "id": "openai", "hlc": hlc(1, "dev_b"), "payload": "e1.bob"}]}))).await;
+    let (_, r) = t
+        .api(
+            "POST",
+            "/v1/changes",
+            &b,
+            Some(json!({"changes": [{"kind": "secret", "id": "openai", "hlc": hlc(1, "dev_b"), "payload": "e1.bob"}]})),
+        )
+        .await;
     assert_eq!(r["results"][0]["status"], "applied");
     let (_, feed) = t.api("GET", "/v1/changes", &a, None).await;
     assert_eq!(feed["changes"][0]["payload"], "e1.alice");
@@ -297,9 +355,17 @@ async fn users_are_isolated() {
     let bob_cookie = t.login("bob").await;
     let (_, html) = t.page("/devices", &bob_cookie).await;
     let token = csrf(&html);
-    let (status, _, _) = t.form(&format!("/devices/{alice_device}/revoke"), Some(&bob_cookie), true, &[("csrf", &token)]).await;
+    let (status, _, _) =
+        t.form(&format!("/devices/{alice_device}/revoke"), Some(&bob_cookie), true, &[("csrf", &token)]).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, _, _) = t.form(&format!("/devices/{alice_device}/rename"), Some(&bob_cookie), true, &[("csrf", &token), ("name", "pwned")]).await;
+    let (status, _, _) = t
+        .form(
+            &format!("/devices/{alice_device}/rename"),
+            Some(&bob_cookie),
+            true,
+            &[("csrf", &token), ("name", "pwned")],
+        )
+        .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(t.api("GET", "/v1/me", &a, None).await.1["device"]["name"], "Alice phone");
     // Non-admins can't reach the admin pages.
@@ -325,21 +391,31 @@ async fn setup_login_csrf_and_invitations() {
     let token = wisprcheap_server::web::new_setup_token(&t.state).unwrap().unwrap();
     let pw = "a long enough password";
     // Wrong token, then the real one.
-    let (status, _, html) = t.form("/setup", None, true, &[("token", "nope"), ("username", "admin"), ("password", pw), ("confirm", pw)]).await;
+    let (status, _, html) = t
+        .form("/setup", None, true, &[("token", "nope"), ("username", "admin"), ("password", pw), ("confirm", pw)])
+        .await;
     assert!(status == StatusCode::OK && html.contains("not valid"));
-    let (status, headers, _) = t.form("/setup", None, true, &[("token", &token), ("username", "admin"), ("password", pw), ("confirm", pw)]).await;
+    let (status, headers, _) = t
+        .form("/setup", None, true, &[("token", &token), ("username", "admin"), ("password", pw), ("confirm", pw)])
+        .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     let admin_cookie = session_cookie(&headers).unwrap();
     // The setup link is single-use.
-    let (_, _, html) = t.form("/setup", None, true, &[("token", &token), ("username", "admin2"), ("password", pw), ("confirm", pw)]).await;
+    let (_, _, html) = t
+        .form("/setup", None, true, &[("token", &token), ("username", "admin2"), ("password", pw), ("confirm", pw)])
+        .await;
     assert!(html.contains("not valid"));
 
     // Pairing needs the CSRF token and a same-origin request.
     let (_, html) = t.page("/devices", &admin_cookie).await;
     let csrf_token = csrf(&html);
     assert_eq!(t.form("/devices/pair", Some(&admin_cookie), true, &[("csrf", "wrong")]).await.0, StatusCode::FORBIDDEN);
-    assert_eq!(t.form("/devices/pair", Some(&admin_cookie), false, &[("csrf", &csrf_token)]).await.0, StatusCode::FORBIDDEN);
-    let (status, _, html) = t.form("/devices/pair", Some(&admin_cookie), true, &[("csrf", &csrf_token), ("name", "Phone")]).await;
+    assert_eq!(
+        t.form("/devices/pair", Some(&admin_cookie), false, &[("csrf", &csrf_token)]).await.0,
+        StatusCode::FORBIDDEN
+    );
+    let (status, _, html) =
+        t.form("/devices/pair", Some(&admin_cookie), true, &[("csrf", &csrf_token), ("name", "Phone")]).await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("<svg") && html.contains("wisprcheap sync pair http://localhost:8080 "));
 
@@ -349,9 +425,11 @@ async fn setup_login_csrf_and_invitations() {
     assert_eq!(status, StatusCode::OK);
     let start = html.find("/invite/").unwrap();
     let path = html[start..start + html[start..].find('<').unwrap()].to_string();
-    let (status, _, html) = t.form(&path, None, true, &[("username", "carol"), ("password", "short"), ("confirm", "short")]).await;
+    let (status, _, html) =
+        t.form(&path, None, true, &[("username", "carol"), ("password", "short"), ("confirm", "short")]).await;
     assert!(status == StatusCode::OK && html.contains("at least 12"));
-    let (status, headers, _) = t.form(&path, None, true, &[("username", "carol"), ("password", pw), ("confirm", pw)]).await;
+    let (status, headers, _) =
+        t.form(&path, None, true, &[("username", "carol"), ("password", pw), ("confirm", pw)]).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert!(session_cookie(&headers).is_some());
     let (_, _, html) = t.form(&path, None, true, &[("username", "dave"), ("password", pw), ("confirm", pw)]).await;
@@ -364,10 +442,12 @@ async fn login_throttling_and_logout() {
     let t = T::new();
     t.user("alice", false);
     for _ in 0..5 {
-        let (_, _, html) = t.form("/login", None, true, &[("username", "alice"), ("password", "wrong password!")]).await;
+        let (_, _, html) =
+            t.form("/login", None, true, &[("username", "alice"), ("password", "wrong password!")]).await;
         assert!(html.contains("Wrong username or password"));
     }
-    let (_, _, html) = t.form("/login", None, true, &[("username", "alice"), ("password", "a long enough password")]).await;
+    let (_, _, html) =
+        t.form("/login", None, true, &[("username", "alice"), ("password", "a long enough password")]).await;
     assert!(html.contains("Too many failed attempts"), "blocked even with the right password");
     let (_, _, html) = t.form("/login", None, true, &[("username", "ghost"), ("password", "whatever it is")]).await;
     assert!(html.contains("Too many failed attempts") || html.contains("Wrong username"));
@@ -376,7 +456,7 @@ async fn login_throttling_and_logout() {
     t.user("bob", false);
     let cookie = t.login("bob").await;
     let (status, html) = t.page("/", &cookie).await;
-    assert!(status == StatusCode::OK && html.contains("Last 12 months"));
+    assert!(status == StatusCode::OK && html.contains("Monthly totals"));
     let token = csrf(&html);
     let (status, headers, _) = t.form("/logout", Some(&cookie), true, &[("csrf", &token)]).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
@@ -422,7 +502,11 @@ async fn null_origin_from_the_same_site_is_accepted() {
         .call(
             "POST",
             "/login",
-            &[("content-type", "application/x-www-form-urlencoded"), ("origin", "https://evil.example"), ("sec-fetch-site", "same-origin")],
+            &[
+                ("content-type", "application/x-www-form-urlencoded"),
+                ("origin", "https://evil.example"),
+                ("sec-fetch-site", "same-origin"),
+            ],
             Body::from(format!("username=admin&password={}", urlencode(pw))),
         )
         .await;
@@ -448,6 +532,158 @@ async fn renaming_a_user_keeps_devices_and_sessions() {
     let (status, html) = t.page("/devices", &cookie).await;
     assert!(status == StatusCode::OK && html.contains("Hexalyse"));
     t.login("hexalyse").await;
-    let (status, _, _) = t.form("/login", None, true, &[("username", "admin"), ("password", "a long enough password")]).await;
+    let (status, _, _) =
+        t.form("/login", None, true, &[("username", "admin"), ("password", "a long enough password")]).await;
     assert_ne!(status, StatusCode::SEE_OTHER);
+}
+
+fn history_change(id: usize, timestamp: &str, words: u64) -> Value {
+    json!({"kind":"history","id":format!("00000000-0000-4000-8000-{id:012x}"),"hlc":hlc(now_ms(),"dev_test"),
+        "payload":"e1.fixture","stats":stats(timestamp,words)})
+}
+
+#[tokio::test]
+async fn custom_estimates_and_unknown_llm_costs_are_reported() {
+    let t = T::new();
+    let user = t.user("prices", false);
+    let token = t.pair(&user, "Phone").await;
+    let mut custom = history_change(1, "2026-10-01T10:00:00Z", 2);
+    custom["stats"]["llmModel"] = json!("custom-model");
+    custom["stats"]["costLlm"] = json!(0.5);
+    custom["stats"]["costTotal"] = Value::Null;
+    let mut missing = history_change(2, "2026-10-01T11:00:00.000Z", 3);
+    missing["stats"]["llmModel"] = json!("custom-model");
+    missing["stats"]["costLlm"] = Value::Null;
+    // Existing clients may report an STT-only total even when LLM pricing is unavailable.
+    missing["stats"]["costTotal"] = json!(0.0001);
+    let mut invalid = history_change(3, "2026-99-01T10:00:00Z", 1);
+    let (_, body) =
+        t.api("POST", "/v1/changes", &token, Some(json!({"changes":[custom,missing,invalid.clone()]}))).await;
+    assert_eq!(body["results"][2]["error"], "invalid_stats");
+    invalid["stats"]["ts"] = json!("2026-10-01T12:00:00Z");
+    invalid["stats"]["inputTokens"] = json!(u64::MAX);
+    assert_eq!(
+        t.api("POST", "/v1/changes", &token, Some(json!({"changes":[invalid]}))).await.1["results"][0]["error"],
+        "invalid_stats"
+    );
+    let (status, body) = t.api("GET", "/v1/stats?from=2026-10&to=2026-10", &token, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let month = &body["months"][0];
+    assert_eq!(month["unknownPrice"], 1);
+    assert_eq!(month["entries"], 2);
+    assert!((month["totalUsd"].as_f64().unwrap() - month["sttUsd"].as_f64().unwrap() - 0.5).abs() < 1e-10, "{month}");
+    assert_eq!(month["llmUsd"], 0.5);
+}
+
+#[tokio::test]
+async fn history_ties_filters_timezone_and_csv() {
+    let t = T::new();
+    let user = t.user("reporter", false);
+    let token = t.pair(&user, "=SUM(A1:A2)").await;
+    let changes: Vec<_> = (0..201).map(|id| history_change(id, "2026-09-30T22:30:00.000Z", 1)).collect();
+    let (status, body) = t.api("POST", "/v1/changes", &token, Some(json!({"changes":changes}))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let cookie = t.login("reporter").await;
+    let (_, account) = t.page("/account", &cookie).await;
+    assert_eq!(
+        t.form("/account/timezone", Some(&cookie), true, &[("csrf", &csrf(&account)), ("timezone", "Europe/Paris")])
+            .await
+            .0,
+        StatusCode::SEE_OTHER
+    );
+    let query = "from=2026-10-01&to=2026-10-01&provider=elevenlabs&model=scribe_v2&status=ok";
+    let mut url = format!("/history?{query}");
+    let mut counts = Vec::new();
+    loop {
+        let (status, html) = t.page(&url, &cookie).await;
+        assert_eq!(status, StatusCode::OK, "{html}");
+        assert!(html.contains("Europe/Paris") && html.contains("2026-10-01 00:30:00 CEST"));
+        counts.push(html.matches("<tr class=\"ok\">").count());
+        assert!(counts.len() <= 3, "pagination loop: {counts:?}, {url}");
+        let Some(pos) = html.find("Older entries") else { break };
+        let start = html[..pos].rfind("href=\"").unwrap() + 6;
+        let end = html[start..].find('"').unwrap() + start;
+        url = html[start..end].replace("&amp;", "&").replace("&#38;", "&");
+    }
+    assert_eq!(counts, vec![100, 100, 1]);
+    let (_, none) = t.page("/history?from=2026-09-30&to=2026-09-30", &cookie).await;
+    assert!(none.contains("No entry yet"));
+    let (_, dashboard) = t.page(&format!("/?{query}"), &cookie).await;
+    assert!(dashboard.contains("800 ms avg") && dashboard.contains("500 ms p95"), "{dashboard}");
+    let (_, csv) = t.page(&format!("/history.csv?{query}"), &cookie).await;
+    assert_eq!(csv.lines().count(), 202);
+    assert!(csv.contains("\"'=SUM(A1:A2)\""));
+    assert!(!csv.contains("e1.fixture"));
+    assert_eq!(t.page("/history?from=broken", &cookie).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(t.page("/history?before=1", &cookie).await.0, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn pulls_are_byte_bounded_and_cursor_sequences_survive_resets() {
+    let t = T::new();
+    let user = t.user("transfers", false);
+    let token = t.pair(&user, "Desktop").await;
+    let payload = format!("e1.{}", "x".repeat(60_000));
+    // Each request is below the body limit, while the entire feed exceeds it.
+    for start in [0, 10] {
+        let changes:Vec<_>=(start..start+10).map(|id|json!({"kind":"setting","id":format!("field{id}"),"hlc":hlc(now_ms(),"dev_test"),"payload":payload})).collect();
+        assert_eq!(t.api("POST", "/v1/changes", &token, Some(json!({"changes":changes}))).await.0, StatusCode::OK);
+    }
+    let mut since = 0;
+    let mut received = 0;
+    loop {
+        let (_, page) = t.api("GET", &format!("/v1/changes?since={since}&limit=1000"), &token, None).await;
+        assert!(page.to_string().len() <= wisprcheap_sync::protocol::MAX_PULL_BYTES);
+        received += page["changes"].as_array().unwrap().len();
+        since = page["nextSince"].as_i64().unwrap();
+        if page["hasMore"] == false {
+            break;
+        }
+    }
+    assert_eq!(received, 20);
+    db::reset_encryption(&t.state.db.lock(), &user).unwrap();
+    t.api(
+        "POST",
+        "/v1/changes",
+        &token,
+        Some(json!({"changes":[{"kind":"setting","id":"new","hlc":hlc(now_ms(),"dev_test"),"payload":"e1.new"}]})),
+    )
+    .await;
+    let (_, page) = t.api("GET", &format!("/v1/changes?since={since}"), &token, None).await;
+    assert_eq!(page["changes"].as_array().unwrap().len(), 1);
+    assert!(page["nextSince"].as_i64().unwrap() > since);
+}
+
+#[tokio::test]
+async fn successful_sync_reports_and_pair_confirmation_are_account_scoped() {
+    let t = T::new();
+    let user = t.user("paired", false);
+    let other = t.user("other", false);
+    let cookie = t.login("paired").await;
+    let code = db::create_pairing_code(&t.state.db.lock(), &user, None).unwrap().0;
+    let url = format!("/devices/pair/status?code={code}");
+    assert!(t.page(&url, &cookie).await.1.contains("\"paired\":false"));
+    let token = t
+        .api("POST", "/v1/pair", "", Some(json!({"code":code,"name":"Mobile","platform":"android","appVersion":"1"})))
+        .await
+        .1["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(t.page(&url, &cookie).await.1.contains("\"paired\":true"));
+    let other_cookie = t.login("other").await;
+    assert!(!t.page(&url, &other_cookie).await.1.contains("\"paired\":true"));
+    assert_eq!(db::list_devices(&t.state.db.lock(), &user).unwrap()[0].last_sync_at, None);
+    let report = json!({"uploaded":4,"downloaded":6,"pending":2,"appVersion":"2.0"});
+    assert_eq!(t.api("POST", "/v1/sync-complete", &token, Some(report.clone())).await.0, StatusCode::NO_CONTENT);
+    assert_eq!(db::list_devices(&t.state.db.lock(), &user).unwrap()[0].last_sync_at, None);
+    let mut report = report;
+    report["pending"] = json!(0);
+    assert_eq!(t.api("POST", "/v1/sync-complete", &token, Some(report)).await.0, StatusCode::NO_CONTENT);
+    let device = db::list_devices(&t.state.db.lock(), &user).unwrap().remove(0);
+    assert!(device.last_sync_at.is_some());
+    assert_eq!((device.sync_uploaded, device.sync_downloaded), (4, 6));
+    assert_eq!(device.app_version, "2.0");
+    assert!(db::list_devices(&t.state.db.lock(), &other).unwrap().is_empty());
+    assert_eq!(t.api("POST", "/v1/sync-complete", "", Some(json!({}))).await.0, StatusCode::UNAUTHORIZED);
 }

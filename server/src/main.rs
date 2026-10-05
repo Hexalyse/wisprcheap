@@ -9,7 +9,11 @@ use clap::{Parser, Subcommand};
 use wisprcheap_server::{AppState, Config, Db, app, auth, db, web};
 
 #[derive(Parser)]
-#[command(name = "wisprcheap-server", version, about = "Self-hostable sync server for wisprcheap. Configured with WCS_* environment variables.")]
+#[command(
+    name = "wisprcheap-server",
+    version,
+    about = "Self-hostable sync server for wisprcheap. Configured with WCS_* environment variables."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -56,8 +60,12 @@ fn main() -> Result<()> {
     let config = Config::from_env()?;
     match cli.command.unwrap_or(Command::Serve) {
         Command::Serve => serve(config),
-        Command::Admin { command: AdminCommand::Create { username, password_stdin } } => create_admin(&config, &username, password_stdin),
-        Command::Admin { command: AdminCommand::Rename { username, new_username } } => rename_user(&config, &username, &new_username),
+        Command::Admin { command: AdminCommand::Create { username, password_stdin } } => {
+            create_admin(&config, &username, password_stdin)
+        }
+        Command::Admin { command: AdminCommand::Rename { username, new_username } } => {
+            rename_user(&config, &username, &new_username)
+        }
         Command::Backup { dir } => backup(&config, dir),
     }
 }
@@ -83,12 +91,19 @@ fn serve(config: Config) -> Result<()> {
                 state.config.public_url
             );
         }
+        let cleanup_state = state.clone();
+        tokio::spawn(async move {
+            loop {
+                if let Err(e) = cleanup_state.blocking(wisprcheap_server::maintenance::cleanup).await.and_then(|r| r) { tracing::error!("cleanup failed: {e:#}"); }
+                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            }
+        });
         if std::env::var("WCS_BACKUP_DAILY").is_ok_and(|v| v == "1") {
             let s = state.clone();
             tokio::spawn(async move {
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(86_400)).await;
-                    if let Err(e) = backup_state(&s.db, &s.config.data_dir.join("backups")) {
+                    if let Err(e) = s.blocking(|s| wisprcheap_server::maintenance::backup(&s.db, &s.config.data_dir.join("backups"))).await.and_then(|r| r) {
                         tracing::error!("daily backup failed: {e:#}");
                     }
                 }
@@ -133,25 +148,10 @@ fn create_admin(config: &Config, username: &str, password_stdin: bool) -> Result
     Ok(())
 }
 
-fn backup_state(database: &Db, dir: &std::path::Path) -> Result<PathBuf> {
-    std::fs::create_dir_all(dir)?;
-    let target = dir.join(format!("wisprcheap-{}.db", chrono::Utc::now().format("%Y%m%d-%H%M%S")));
-    database.backup_to(&target)?;
-    let mut old: Vec<_> = std::fs::read_dir(dir)?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("wisprcheap-") && n.ends_with(".db")))
-        .collect();
-    old.sort();
-    while old.len() > 7 {
-        let _ = std::fs::remove_file(old.remove(0));
-    }
-    tracing::info!("backup written to {}", target.display());
-    Ok(target)
-}
-
 fn backup(config: &Config, dir: Option<PathBuf>) -> Result<()> {
     let database = Db::open(&config.db_path())?;
-    let target = backup_state(&database, &dir.unwrap_or_else(|| config.data_dir.join("backups")))?;
+    let target =
+        wisprcheap_server::maintenance::backup(&database, &dir.unwrap_or_else(|| config.data_dir.join("backups")))?;
     println!("{}", target.display());
     Ok(())
 }

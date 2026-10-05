@@ -4,6 +4,7 @@
 
 use std::collections::BTreeMap;
 use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -50,6 +51,8 @@ pub struct SyncState {
     pub outbox: Vec<Change>,
     /// Remote changes that couldn't be written to the config yet (encrypted).
     pub pending: Vec<Change>,
+    /// Downloaded encrypted history not written to the history file yet.
+    pub history_inbox: Vec<Change>,
     /// History file and how many bytes of it were uploaded.
     pub history_file: String,
     pub history_offset: u64,
@@ -82,7 +85,10 @@ impl SyncState {
         std::fs::create_dir_all(dir)?;
         let file = dir.join(STATE_FILE);
         let tmp = dir.join(format!("{STATE_FILE}.tmp"));
-        std::fs::write(&tmp, serde_json::to_vec_pretty(self)?)?;
+        let mut output = File::create(&tmp)?;
+        output.write_all(&serde_json::to_vec_pretty(self)?)?;
+        output.sync_all()?;
+        drop(output);
         std::fs::rename(&tmp, &file).map_err(|e| anyhow!("can't write {}: {e}", file.display()))
     }
 
@@ -93,14 +99,14 @@ impl SyncState {
         self.snapshot.clear();
         self.outbox.clear();
         self.pending.clear();
+        self.history_inbox.clear();
         self.history_offset = 0;
         self.history_mode.clear();
     }
 
     /// Queue a local change, replacing an older queued change of the same record.
     pub fn queue(&mut self, change: Change) {
-        self.outbox
-            .retain(|o| !(o.kind == change.kind && o.id == change.id));
+        self.outbox.retain(|o| !(o.kind == change.kind && o.id == change.id));
         self.outbox.push(change);
     }
 }
@@ -128,11 +134,7 @@ pub struct StateLock {
 impl StateLock {
     pub async fn acquire(dir: &Path) -> Result<Self> {
         std::fs::create_dir_all(dir)?;
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(dir.join(LOCK_FILE))?;
+        let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(dir.join(LOCK_FILE))?;
         let deadline = Instant::now() + Duration::from_secs(120);
         loop {
             match file.try_lock() {

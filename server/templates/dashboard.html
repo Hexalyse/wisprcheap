@@ -2,16 +2,23 @@
 {% block title %}Dashboard · WisprCheap sync{% endblock %}
 {% block content %}
 <h1>{{ current.label }}</h1>
+{% include "filters.html" %}
 <section class="tiles">
   <div class="tile"><span class="big">{{ current.total }}</span><span>total cost</span></div>
   <div class="tile"><span class="big">{{ current.words }}</span><span>words</span></div>
-  <div class="tile"><span class="big">{{ current.entries }}</span><span>dictations{% if current.commands > 0 %} ({{ current.commands }} commands){% endif %}</span></div>
+  <div class="tile"><span class="big">{{ current.entries }}</span><span>successful entries{% if current.commands > 0 %} ({{ current.commands }} commands){% endif %}</span></div>
   <div class="tile"><span class="big">{{ current.audio }}</span><span>minutes of audio</span></div>
+</section>
+<section class="card performance">
+  <h2>Reliability and latency</h2>
+  <p><strong>{{ current.failure_rate }}</strong> failure rate · {{ current.failed }} failed entries</p>
+  <p>Speech-to-text: {{ current.stt_latency }}<br>LLM: {{ current.llm_latency }}</p>
+  <p class="muted">Latency excludes entries without a measurement. p95 is the time that 95% of measured requests finished within.</p>
 </section>
 
 {% if !devices.is_empty() %}
 <section class="card">
-  <h2>This month by device</h2>
+  <h2>Selected period by device</h2>
   <table>
     <tr><th>Device</th><th class="num">Dictations</th><th class="num">Words</th><th class="num">Cost</th></tr>
     {% for d in devices %}<tr><td>{{ d.0 }}</td><td class="num">{{ d.1 }}</td><td class="num">{{ d.2 }}</td><td class="num">{{ d.3 }}</td></tr>{% endfor %}
@@ -21,7 +28,7 @@
 
 {% if !models.is_empty() %}
 <section class="card">
-  <h2>This month by model</h2>
+  <h2>Selected period by model</h2>
   <table>
     <tr><th>Model</th><th>Use</th><th class="num">Entries</th><th class="num">Cost</th></tr>
     {% for m in models %}<tr><td>{{ m.0 }}</td><td>{{ m.1 }}</td><td class="num">{{ m.2 }}</td><td class="num">{{ m.3 }}</td></tr>{% endfor %}
@@ -30,7 +37,7 @@
 {% endif %}
 
 <section class="card">
-  <h2>Last 12 months</h2>
+  <h2>Monthly totals</h2>
   {% if months.is_empty() %}
   <p class="muted">Nothing yet. Pair a device (Devices → Add a device) and dictate: statistics appear after the next sync.</p>
   {% else %}
@@ -41,7 +48,7 @@
     <tr><td>{{ m.month }}</td><td class="num">{{ m.entries }}</td><td class="num">{{ m.words }}</td><td class="num">{{ m.audio }}</td><td class="num">{{ m.stt }}</td><td class="num">{{ m.llm }}</td><td class="num"><strong>{{ m.total }}</strong></td><td class="num">{{ m.per10k }}</td></tr>
     {% endfor %}
   </table>
-  {% if unknown > 0 %}<p class="muted">{{ unknown }} entries used a model without a known price (counted as $0).</p>{% endif %}
+  {% if unknown > 0 %}<p class="warning">{{ unknown }} entries have incomplete pricing for an STT or LLM component. Totals use known costs and any client total estimate; the actual cost may be higher. Custom-model estimates reported by a client are included.</p>{% endif %}
   {% endif %}
 </section>
 {% endblock %}

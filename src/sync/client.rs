@@ -6,8 +6,8 @@ use std::time::Duration;
 use reqwest::{Method, RequestBuilder, StatusCode};
 use serde::de::DeserializeOwned;
 use wisprcheap_sync::protocol::{
-    Change, ChangesResponse, ErrorBody, MeResponse, PairRequest, PairResponse, PushRequest,
-    PushResponse, PutKeyringRequest, PutKeyringResponse, RenameDeviceRequest, StatsResponse,
+    Change, ChangesResponse, ErrorBody, MeResponse, PairRequest, PairResponse, PushRequest, PushResponse,
+    PutKeyringRequest, PutKeyringResponse, RenameDeviceRequest, StatsResponse, SyncReportRequest,
 };
 
 #[derive(Debug, Clone)]
@@ -17,11 +17,7 @@ pub enum ApiError {
     /// The server couldn't be reached.
     Network(String),
     /// The server answered with an error.
-    Status {
-        status: u16,
-        code: String,
-        message: String,
-    },
+    Status { status: u16, code: String, message: String },
 }
 
 impl ApiError {
@@ -38,11 +34,7 @@ impl fmt::Display for ApiError {
         match self {
             ApiError::Unauthorized => write!(f, "this device was disconnected from the server"),
             ApiError::Network(e) => write!(f, "can't reach the server: {e}"),
-            ApiError::Status {
-                status,
-                code,
-                message,
-            } => {
+            ApiError::Status { status, code, message } => {
                 if message.is_empty() {
                     write!(f, "server error {status} ({code})")
                 } else {
@@ -61,11 +53,8 @@ pub fn normalize_server(url: &str) -> Result<String, String> {
     if t.is_empty() {
         return Err("the server URL is empty".into());
     }
-    let full = if t.starts_with("https://") || t.starts_with("http://") {
-        t.to_string()
-    } else {
-        format!("https://{t}")
-    };
+    let full =
+        if t.starts_with("https://") || t.starts_with("http://") { t.to_string() } else { format!("https://{t}") };
     if full.contains(char::is_whitespace) {
         return Err(format!("invalid server URL: {url}"));
     }
@@ -94,17 +83,11 @@ pub struct Client {
 
 impl Client {
     pub fn new(server: &str, token: &str) -> Self {
-        Self {
-            http: http_client(),
-            base: server.trim_end_matches('/').to_string(),
-            token: token.trim().to_string(),
-        }
+        Self { http: http_client(), base: server.trim_end_matches('/').to_string(), token: token.trim().to_string() }
     }
 
     fn request(&self, method: Method, path: &str) -> RequestBuilder {
-        self.http
-            .request(method, format!("{}{path}", self.base))
-            .bearer_auth(&self.token)
+        self.http.request(method, format!("{}{path}", self.base)).bearer_auth(&self.token)
     }
 
     pub async fn me(&self) -> Result<MeResponse, ApiError> {
@@ -123,12 +106,7 @@ impl Client {
         send(r).await
     }
 
-    pub async fn pull(
-        &self,
-        since: i64,
-        limit: usize,
-        exclude_history: bool,
-    ) -> Result<ChangesResponse, ApiError> {
+    pub async fn pull(&self, since: i64, limit: usize, exclude_history: bool) -> Result<ChangesResponse, ApiError> {
         let mut path = format!("/v1/changes?since={since}&limit={limit}");
         if exclude_history {
             path.push_str("&exclude=history");
@@ -137,10 +115,22 @@ impl Client {
     }
 
     pub async fn push(&self, changes: &[Change]) -> Result<PushResponse, ApiError> {
-        let body = PushRequest {
-            changes: changes.to_vec(),
-        };
-        send(self.request(Method::POST, "/v1/changes").json(&body)).await
+        let body = PushRequest { changes: changes.to_vec() };
+        let response: PushResponse = send(self.request(Method::POST, "/v1/changes").json(&body)).await?;
+        if response.results.len() != changes.len()
+            || changes.iter().zip(&response.results).any(|(c, r)| c.kind != r.kind || c.id != r.id)
+        {
+            return Err(ApiError::Status {
+                status: 200,
+                code: "bad_response".into(),
+                message: "the server returned an incomplete or mismatched upload acknowledgement".into(),
+            });
+        }
+        Ok(response)
+    }
+
+    pub async fn report_sync(&self, report: &SyncReportRequest) -> Result<(), ApiError> {
+        send_empty(self.request(Method::POST, "/v1/sync-complete").json(report)).await
     }
 
     pub async fn stats(&self, from: &str, to: &str, offset: i64) -> Result<StatsResponse, ApiError> {
@@ -197,10 +187,7 @@ async fn response(r: RequestBuilder) -> Result<reqwest::Response, ApiError> {
 async fn send<T: DeserializeOwned>(r: RequestBuilder) -> Result<T, ApiError> {
     let res = response(r).await?;
     let status = res.status().as_u16();
-    let bytes = res
-        .bytes()
-        .await
-        .map_err(|e| ApiError::Network(describe(&e)))?;
+    let bytes = res.bytes().await.map_err(|e| ApiError::Network(describe(&e)))?;
     serde_json::from_slice(&bytes).map_err(|e| ApiError::Status {
         status,
         code: "bad_response".into(),

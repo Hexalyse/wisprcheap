@@ -124,6 +124,10 @@ mode on/off) is per device and never synced.
 - `status`: `failed` (the entry has an `error`), `empty` (0 words), otherwise `ok`.
 - `llm*` are `null` when there was no LLM step.
 - The server recomputes the costs with its price table and keeps the client's values too.
+- Resolve STT and LLM costs independently: server price, else client estimate. Sum resolved
+  components when complete; a client total may supply an estimate when a component is unavailable.
+  Otherwise report a partial total and increment `unknownPrice` when an applicable component is
+  missing (excluding failed entries).
 - Entries written before sync have no `id`: use `UUIDv5(namespace 6ba7b811-9dad-11d1-80b4-00c04fd430c8 (URL), "wisprcheap:" + deviceId + ":" + ts)`.
 
 ## 7. API
@@ -132,13 +136,14 @@ All bodies are JSON. Errors look like `{"error": "<code>", "message": "<text>"}`
 | Request | Response |
 |---|---|
 | `POST /v1/pair {code, name, platform, appVersion}` (no auth) | `200 {token, device: {id, name, platform}, user: {id, username}}`; `404 invalid_code`; `429 rate_limited` |
-| `GET /v1/me` | `{user, device, serverTime, serverVersion, keyring: {keyVersion, keyId, salt, kdf: {alg, m, t, p}, wrappedKey} \| null}` |
+| `GET /v1/me` | `{user, device, serverTime, serverVersion, keyring: {keyVersion, keyId, salt, kdf: {alg, m, t, p}, wrappedKey} \| null, capabilities: {syncReport: true}}`; missing capabilities means false |
 | `PUT /v1/keyring {keyId, salt, kdf, wrappedKey}` | Without `If-Match`: create, `409 keyring_exists` if one exists. With `If-Match: <keyVersion>`: replace, `412 version_mismatch` if stale. `200 {keyVersion}` |
 | `GET /v1/changes?since=<seq>&limit=<≤1000, default 500>&exclude=history` | `{changes: [{seq, kind, id, hlc, deleted, payload, device, stats?}], nextSince, hasMore}`, oldest first |
 | `POST /v1/changes {changes: [{kind, id, hlc, deleted, payload, stats?}]}` (≤ 500) | `{results: [{kind, id, status, seq?, current?, error?}]}` in the same order |
 | `GET /v1/stats?from=YYYY-MM&to=YYYY-MM&offset=<minutes east of UTC>` | `{months: [{month, entries, commands, failed, words, audioMinutes, sttUsd, llmUsd, totalUsd, unknownPrice, byDevice: [{device, entries, words, totalUsd}]}], devices: [{id, name, platform}]}`, newest month first |
 | `PATCH /v1/device {name}` | `204` |
 | `DELETE /v1/device` | `204` (the token is revoked) |
+| `POST /v1/sync-complete {uploaded, downloaded, pending, appVersion}` | `204`; only send when `capabilities.syncReport` is true. Counts describe the completed cycle; `pending: 0` updates the device's last successful sync |
 
 Push statuses:
 - `applied` → stored as `seq`;
@@ -147,8 +152,11 @@ Push statuses:
 - `rejected` → invalid, with `error`: `invalid_kind`, `invalid_id`, `invalid_hlc`, `clock_skew`,
   `payload_too_large`, `invalid_stats`, `missing_payload`.
 
-Limits: request bodies ≤ 1 MiB, payloads ≤ 64 KiB, 120 requests per minute per token
+Limits: request bodies and pull responses ≤ 1 MiB, payloads ≤ 64 KiB, HLC strings ≤ 128 bytes, 120 requests per minute per token
 (`429 rate_limited`).
+Clients split push batches by serialized UTF-8 size (target 768 KiB), including JSON escaping and
+envelope overhead. Pulls can return fewer records than `limit` because of the byte limit; always
+follow `hasMore`. Feed sequence numbers remain monotonic across encryption resets and retention.
 
 ## 8. Client algorithm (summary)
 1. Compare the local profile with the last synced snapshot (except on the first sync). Every
@@ -160,10 +168,14 @@ Limits: request bodies ≤ 1 MiB, payloads ≤ 64 KiB, 120 requests per minute p
 3. Pull pages from the saved cursor, decrypt, observe the HLCs. A pulled record older than (or equal
    to) the snapshot is skipped; if the outbox has a newer change of the same record, the outbox wins,
    otherwise the pulled record replaces it. Apply the values locally in `seq` order (without echoing
-   them back), save the cursor. Values that can't be applied yet are kept and retried.
+   them back). Persist each page's encrypted profile/history inbox and cursor atomically before
+   applying it. Remove inbox entries only after local writes succeed; failed entries are retried.
 4. Compare the local profile with the snapshot again (first sync: what the server didn't have).
 5. Push the outbox:
    - `applied` / `exists` → remove from the outbox;
    - `stale` → apply `current`;
    - `rejected` → drop, and log it.
 6. Upload new history entries (`history` records with `stats`).
+7. Persist the completed local state, then optionally report cycle counts with `/v1/sync-complete`.
+   Validate push acknowledgement count/order/record IDs before removing outbox entries. Persist
+   stale `current` records before another network request, so interrupted pushes are recoverable.

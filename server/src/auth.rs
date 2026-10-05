@@ -53,8 +53,8 @@ pub fn check_password_rules(username: &str, password: &str) -> Result<(), String
 }
 
 pub fn check_username(username: &str) -> Result<(), String> {
-    let ok = (2..=40).contains(&username.len())
-        && username.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c));
+    let ok =
+        (2..=40).contains(&username.len()) && username.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c));
     if ok { Ok(()) } else { Err("Usernames have 2 to 40 characters: letters, digits, dot, dash or underscore.".into()) }
 }
 
@@ -78,7 +78,7 @@ impl RateLimiter {
         if now.duration_since(entry.0) >= window {
             *entry = (now, 0);
         }
-        entry.1 += 1;
+        entry.1 = entry.1.saturating_add(1);
         entry.1 <= max
     }
 
@@ -97,12 +97,23 @@ impl RateLimiter {
     pub fn login_failed(&self, key: &str) {
         let mut map = self.failures.lock().unwrap_or_else(|p| p.into_inner());
         let entry = map.entry(key.to_string()).or_insert((0, Instant::now()));
-        entry.0 += 1;
+        entry.0 = entry.0.saturating_add(1);
         entry.1 = Instant::now();
     }
 
     pub fn login_succeeded(&self, key: &str) {
         self.failures.lock().unwrap_or_else(|p| p.into_inner()).remove(key);
+    }
+
+    pub fn cleanup(&self) {
+        self.windows
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .retain(|_, (at, _)| at.elapsed() < Duration::from_secs(3600));
+        self.failures
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .retain(|_, (_, at)| at.elapsed() < Duration::from_secs(3600));
     }
 }
 
@@ -163,12 +174,22 @@ impl FromRequestParts<SharedState> for DeviceAuth {
             .ok_or_else(ApiError::unauthorized)?;
         let peer = parts.extensions.get::<ConnectInfo<SocketAddr>>().map(|c| c.0);
         let ip = client_ip(&parts.headers, peer, state.config.trust_proxy);
-        let conn = state.db.lock();
-        let (device, user) = db::device_by_token(&conn, token)?.ok_or_else(ApiError::unauthorized)?;
+        let token = token.to_string();
+        let touch_ip = ip.clone();
+        let found = state
+            .blocking(move |s| -> anyhow::Result<_> {
+                let conn = s.db.lock();
+                let found = db::device_by_token(&conn, &token)?;
+                if let Some((d, _)) = &found {
+                    db::touch_device(&conn, &d.id, &touch_ip)?;
+                }
+                Ok(found)
+            })
+            .await??;
+        let (device, user) = found.ok_or_else(ApiError::unauthorized)?;
         if !state.limiter.allow(&format!("api:{}", device.id), 120, Duration::from_secs(60)) {
             return Err(ApiError::rate_limited());
         }
-        db::touch_device(&conn, &device.id, &ip)?;
         Ok(Self { device, user, ip })
     }
 }

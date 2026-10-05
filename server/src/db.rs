@@ -1,7 +1,7 @@
 //! SQLite storage (one file in the data directory). All access goes through one connection behind a
 //! mutex: plenty for a personal or family server, and it keeps writes strictly serialised.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result};
@@ -9,7 +9,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::util::{b64, new_id, new_pairing_code, normalize_pairing_code, now_s, random_bytes, sha256};
 
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
 CREATE TABLE users (
     id TEXT PRIMARY KEY,
     username TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -100,7 +101,31 @@ CREATE TABLE audit_log (
 );
 CREATE INDEX audit_user ON audit_log(user_id, at);
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-"#];
+"#,
+    r#"
+ALTER TABLE users ADD COLUMN timezone TEXT NOT NULL DEFAULT 'UTC';
+ALTER TABLE devices ADD COLUMN last_sync_at INTEGER;
+ALTER TABLE devices ADD COLUMN sync_uploaded INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE devices ADD COLUMN sync_downloaded INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE devices ADD COLUMN sync_pending INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE history_stats ADD COLUMN timestamp_ms INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE history_stats ADD COLUMN mode TEXT NOT NULL DEFAULT '';
+ALTER TABLE history_stats ADD COLUMN status TEXT NOT NULL DEFAULT '';
+ALTER TABLE history_stats ADD COLUMN provider TEXT NOT NULL DEFAULT '';
+ALTER TABLE history_stats ADD COLUMN stt_model TEXT NOT NULL DEFAULT '';
+ALTER TABLE history_stats ADD COLUMN llm_model TEXT;
+ALTER TABLE history_stats ADD COLUMN words INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE history_stats ADD COLUMN duration_sec REAL NOT NULL DEFAULT 0;
+ALTER TABLE history_stats ADD COLUMN stt_ms INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE history_stats ADD COLUMN llm_ms INTEGER;
+ALTER TABLE history_stats ADD COLUMN resolved_stt REAL NOT NULL DEFAULT 0;
+ALTER TABLE history_stats ADD COLUMN resolved_llm REAL NOT NULL DEFAULT 0;
+ALTER TABLE history_stats ADD COLUMN resolved_total REAL NOT NULL DEFAULT 0;
+ALTER TABLE history_stats ADD COLUMN unknown_price INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX history_report ON history_stats(user_id, deleted, timestamp_ms DESC, entry_id DESC);
+INSERT INTO meta(key, value) SELECT 'sequence', CAST(COALESCE(MAX(seq), 0) AS TEXT) FROM records;
+"#,
+];
 
 pub const SESSION_MAX_AGE_S: i64 = 30 * 86_400;
 pub const SESSION_IDLE_S: i64 = 7 * 86_400;
@@ -109,6 +134,7 @@ pub const INVITE_TTL_S: i64 = 7 * 86_400;
 
 pub struct Db {
     conn: Mutex<Connection>,
+    path: PathBuf,
 }
 
 impl Db {
@@ -123,7 +149,10 @@ impl Db {
             conn.execute_batch(&format!("BEGIN; {sql} PRAGMA user_version = {}; COMMIT;", i + 1))
                 .with_context(|| format!("database migration {}", i + 1))?;
         }
-        Ok(Self { conn: Mutex::new(conn) })
+        if meta_get(&conn, "stats_index_v1")?.is_none() {
+            crate::stats::backfill(&conn)?;
+        }
+        Ok(Self { conn: Mutex::new(conn), path: path.to_path_buf() })
     }
 
     pub fn lock(&self) -> MutexGuard<'_, Connection> {
@@ -132,7 +161,9 @@ impl Db {
 
     /// Online backup to `target` (a consistent copy while the server runs).
     pub fn backup_to(&self, target: &Path) -> Result<()> {
-        let conn = self.lock();
+        // A separate source connection lets sync requests continue during online backups.
+        let conn = Connection::open(&self.path)?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let mut dst = Connection::open(target)?;
         let backup = rusqlite::backup::Backup::new(&conn, &mut dst)?;
         backup.run_to_completion(256, std::time::Duration::from_millis(10), None)?;
@@ -150,6 +181,7 @@ pub struct User {
     pub is_admin: bool,
     pub disabled: bool,
     pub created_at: i64,
+    pub timezone: String,
 }
 
 fn user_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
@@ -160,10 +192,11 @@ fn user_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
         is_admin: r.get::<_, i64>(3)? != 0,
         disabled: r.get::<_, i64>(4)? != 0,
         created_at: r.get(5)?,
+        timezone: r.get(6)?,
     })
 }
 
-const USER_COLS: &str = "id, username, password_hash, is_admin, disabled, created_at";
+const USER_COLS: &str = "id, username, password_hash, is_admin, disabled, created_at, timezone";
 
 pub fn user_count(conn: &Connection) -> Result<i64> {
     Ok(conn.query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))?)
@@ -207,7 +240,7 @@ pub fn list_users(conn: &Connection) -> Result<Vec<(User, i64)>> {
         "SELECT {USER_COLS}, (SELECT COUNT(*) FROM devices d WHERE d.user_id = users.id AND d.revoked_at IS NULL) \
          FROM users ORDER BY username"
     ))?;
-    let rows = stmt.query_map([], |r| Ok((user_from_row(r)?, r.get(6)?)))?;
+    let rows = stmt.query_map([], |r| Ok((user_from_row(r)?, r.get(7)?)))?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
@@ -231,6 +264,7 @@ pub fn delete_user(conn: &Connection, user_id: &str) -> Result<()> {
 
 // --- Sessions ---
 
+#[derive(Clone)]
 pub struct Session {
     pub user: User,
     pub csrf: String,
@@ -266,6 +300,7 @@ pub fn session(conn: &Connection, cookie: &str) -> Result<Option<Session>> {
                     is_admin: r.get::<_, i64>(6)? != 0,
                     disabled: r.get::<_, i64>(7)? != 0,
                     created_at: r.get(8)?,
+                    timezone: r.get(9)?,
                 };
                 Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?, user))
             },
@@ -340,9 +375,13 @@ pub struct Device {
     pub last_seen_at: Option<i64>,
     pub last_ip: Option<String>,
     pub revoked_at: Option<i64>,
+    pub last_sync_at: Option<i64>,
+    pub sync_uploaded: u64,
+    pub sync_downloaded: u64,
+    pub sync_pending: u64,
 }
 
-const DEVICE_COLS: &str = "id, user_id, name, platform, app_version, created_at, last_seen_at, last_ip, revoked_at";
+const DEVICE_COLS: &str = "id, user_id, name, platform, app_version, created_at, last_seen_at, last_ip, revoked_at, last_sync_at, sync_uploaded, sync_downloaded, sync_pending";
 
 fn device_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Device> {
     Ok(Device {
@@ -355,6 +394,10 @@ fn device_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Device> {
         last_seen_at: r.get(6)?,
         last_ip: r.get(7)?,
         revoked_at: r.get(8)?,
+        last_sync_at: r.get(9)?,
+        sync_uploaded: r.get::<_, i64>(10)?.max(0) as u64,
+        sync_downloaded: r.get::<_, i64>(11)?.max(0) as u64,
+        sync_pending: r.get::<_, i64>(12)?.max(0) as u64,
     })
 }
 
@@ -404,6 +447,10 @@ pub fn redeem_pairing_code(
         last_seen_at: None,
         last_ip: None,
         revoked_at: None,
+        last_sync_at: None,
+        sync_uploaded: 0,
+        sync_downloaded: 0,
+        sync_pending: 0,
     };
     tx.execute(
         "INSERT INTO devices (id, user_id, name, platform, app_version, token_hash, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -447,11 +494,13 @@ pub fn revoke_device(conn: &Connection, user_id: &str, device_id: &str) -> Resul
 }
 
 pub fn rename_device(conn: &Connection, user_id: &str, device_id: &str, name: &str) -> Result<bool> {
-    Ok(conn.execute("UPDATE devices SET name = ?3 WHERE id = ?2 AND user_id = ?1", params![user_id, device_id, name])? == 1)
+    Ok(conn
+        .execute("UPDATE devices SET name = ?3 WHERE id = ?2 AND user_id = ?1", params![user_id, device_id, name])?
+        == 1)
 }
 
 pub fn touch_device(conn: &Connection, device_id: &str, ip: &str) -> Result<()> {
-    conn.execute("UPDATE devices SET last_seen_at = ?2, last_ip = ?3 WHERE id = ?1", params![device_id, now_s(), ip])?;
+    conn.execute("UPDATE devices SET last_seen_at = ?2, last_ip = ?3 WHERE id = ?1 AND (last_seen_at IS NULL OR last_seen_at < ?2 - 60 OR last_ip IS NOT ?3)", params![device_id, now_s(), ip])?;
     Ok(())
 }
 
@@ -477,7 +526,12 @@ pub fn keyring(conn: &Connection, user_id: &str) -> Result<Option<wisprcheap_syn
     })
 }
 
-pub fn put_keyring(conn: &Connection, user_id: &str, version: i64, req: &wisprcheap_sync::protocol::PutKeyringRequest) -> Result<()> {
+pub fn put_keyring(
+    conn: &Connection,
+    user_id: &str,
+    version: i64,
+    req: &wisprcheap_sync::protocol::PutKeyringRequest,
+) -> Result<()> {
     conn.execute(
         "INSERT INTO keyrings (user_id, key_version, key_id, salt, kdf, wrapped_key, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
          ON CONFLICT(user_id) DO UPDATE SET key_version = ?2, key_id = ?3, salt = ?4, kdf = ?5, wrapped_key = ?6, updated_at = ?7",
@@ -488,8 +542,10 @@ pub fn put_keyring(conn: &Connection, user_id: &str, version: i64, req: &wisprch
 
 /// "Reset encryption": forgets the keyring and every encrypted record; the statistics stay.
 pub fn reset_encryption(conn: &Connection, user_id: &str) -> Result<()> {
-    conn.execute("DELETE FROM keyrings WHERE user_id = ?1", [user_id])?;
-    conn.execute("DELETE FROM records WHERE user_id = ?1", [user_id])?;
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM keyrings WHERE user_id = ?1", [user_id])?;
+    tx.execute("DELETE FROM records WHERE user_id = ?1", [user_id])?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -504,7 +560,14 @@ pub struct AuditEntry {
     pub ip: Option<String>,
 }
 
-pub fn audit(conn: &Connection, user_id: Option<&str>, device_id: Option<&str>, event: &str, detail: Option<&str>, ip: &str) {
+pub fn audit(
+    conn: &Connection,
+    user_id: Option<&str>,
+    device_id: Option<&str>,
+    event: &str,
+    detail: Option<&str>,
+    ip: &str,
+) {
     let result = conn.execute(
         "INSERT INTO audit_log (user_id, device_id, event, detail, ip, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![user_id, device_id, event, detail, ip, now_s()],
@@ -520,7 +583,14 @@ pub fn audit_list(conn: &Connection, user_id: Option<&str>, limit: i64) -> Resul
                WHERE (?1 IS NULL OR a.user_id = ?1) ORDER BY a.id DESC LIMIT ?2";
     let mut stmt = conn.prepare(sql)?;
     let rows = stmt.query_map(params![user_id, limit], |r| {
-        Ok(AuditEntry { at: r.get(0)?, username: r.get(1)?, device: r.get(2)?, event: r.get(3)?, detail: r.get(4)?, ip: r.get(5)? })
+        Ok(AuditEntry {
+            at: r.get(0)?,
+            username: r.get(1)?,
+            device: r.get(2)?,
+            event: r.get(3)?,
+            detail: r.get(4)?,
+            ip: r.get(5)?,
+        })
     })?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
@@ -532,11 +602,55 @@ pub fn meta_get(conn: &Connection, key: &str) -> Result<Option<String>> {
 }
 
 pub fn meta_set(conn: &Connection, key: &str, value: &str) -> Result<()> {
-    conn.execute("INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2", params![key, value])?;
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2",
+        params![key, value],
+    )?;
     Ok(())
 }
 
 pub fn meta_delete(conn: &Connection, key: &str) -> Result<()> {
     conn.execute("DELETE FROM meta WHERE key = ?1", [key])?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn migrates_existing_history_and_indexes_only_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(MIGRATIONS[0]).unwrap();
+            conn.execute_batch("PRAGMA user_version=1").unwrap();
+            let user = create_user(&conn, "legacy", "hash", false).unwrap();
+            let stats = serde_json::json!({"ts":"2026-09-01T10:00:00Z","mode":"dictation","durationSec":60.0,
+                "sttProvider":"elevenlabs","sttModel":"scribe_v2","sttMs":800,"keyterms":0,"llmModel":"custom",
+                "inputTokens":100,"outputTokens":10,"words":4,"status":"ok","costLlm":0.5});
+            conn.execute("INSERT INTO history_stats(user_id,entry_id,ts,stats,cost_stt,cost_total) VALUES (?1,'history','2026-09-01T10:00:00Z',?2,0.00395,0.00395)",params![user,stats.to_string()]).unwrap();
+            conn.execute("INSERT INTO records(user_id,kind,id,hlc,deleted,payload,seq,updated_at) VALUES (?1,'history','history','clock',0,'e1.old',7,0)",[user]).unwrap();
+        }
+        {
+            let database = Db::open(&path).unwrap();
+            let conn = database.lock();
+            let (ts, total, words): (String, f64, i64) = conn
+                .query_row("SELECT ts,resolved_total,words FROM history_stats", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                })
+                .unwrap();
+            assert_eq!(ts, "2026-09-01T10:00:00.000Z");
+            assert!(total > 0.5);
+            assert_eq!(words, 4);
+            assert_eq!(meta_get(&conn, "sequence").unwrap().as_deref(), Some("7"));
+            assert_eq!(list_users(&conn).unwrap()[0].0.timezone, "UTC");
+            conn.execute("UPDATE history_stats SET resolved_total=123", []).unwrap();
+        }
+        let database = Db::open(&path).unwrap();
+        assert_eq!(
+            database.lock().query_row("SELECT resolved_total FROM history_stats", [], |r| r.get::<_, f64>(0)).unwrap(),
+            123.0
+        );
+    }
 }

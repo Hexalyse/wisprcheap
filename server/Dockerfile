@@ -6,6 +6,7 @@ WORKDIR /src
 # but only the server is built.
 COPY Cargo.toml Cargo.lock ./
 COPY src src
+COPY desktop-ui desktop-ui
 COPY sync sync
 COPY server server
 RUN cargo build --release --locked -p wisprcheap-server \

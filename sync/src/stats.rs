@@ -93,6 +93,14 @@ impl HistoryStats {
         if !finite(self.duration_sec) || self.duration_sec > 86_400.0 {
             return Err("invalid duration".into());
         }
+        if self.words > 10_000_000
+            || self.input_tokens > 10_000_000
+            || self.output_tokens > 10_000_000
+            || self.stt_ms > 86_400_000
+            || self.llm_ms.is_some_and(|v| v > 86_400_000)
+        {
+            return Err("invalid word, token or latency count".into());
+        }
         for c in [self.cost_stt, self.cost_llm, self.cost_total].into_iter().flatten() {
             if !finite(c) || c > 1_000.0 {
                 return Err("invalid cost".into());
@@ -111,9 +119,13 @@ impl HistoryStats {
         let llm = self
             .llm_model
             .as_deref()
-            .filter(|_| self.input_tokens + self.output_tokens > 0)
+            .filter(|_| self.input_tokens.saturating_add(self.output_tokens) > 0)
             .and_then(|m| llm_cost(m, self.input_tokens, self.output_tokens));
-        let total = stt.map(|s| s + llm.unwrap_or(0.0));
+        let total = match (stt, llm, self.llm_model.as_deref()) {
+            (Some(s), Some(l), _) => Some(s + l),
+            (Some(s), None, None) => Some(s),
+            _ => None,
+        };
         (stt, llm, total)
     }
 }

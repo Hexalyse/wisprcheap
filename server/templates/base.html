@@ -3,20 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer">
+<meta name="referrer" content="same-origin">
 <title>{% block title %}WisprCheap sync{% endblock %}</title>
 <link rel="stylesheet" href="/static/style.css">
+<script src="/static/app.js" defer></script>
 </head>
 <body>
 <header>
   <a class="brand" href="/">WisprCheap <span>sync</span></a>
   {% if let Some(u) = nav %}
   <nav>
-    <a href="/">Dashboard</a>
-    <a href="/history">History</a>
-    <a href="/devices">Devices</a>
-    <a href="/account">Account</a>
-    {% if u.is_admin %}<a href="/admin">Admin</a>{% endif %}
+    <a href="/" {% if u.section == "dashboard" %}aria-current="page"{% endif %}>Dashboard</a>
+    <a href="/history" {% if u.section == "history" %}aria-current="page"{% endif %}>History</a>
+    <a href="/devices" {% if u.section == "devices" %}aria-current="page"{% endif %}>Devices</a>
+    <a href="/account" {% if u.section == "account" %}aria-current="page"{% endif %}>Account</a>
+    {% if u.is_admin %}<a href="/admin" {% if u.section == "admin" %}aria-current="page"{% endif %}>Admin</a>{% endif %}
     <form method="post" action="/logout" class="inline">
       <input type="hidden" name="csrf" value="{{ u.csrf }}">
       <button class="link">Log out ({{ u.username }})</button>

@@ -15,10 +15,23 @@ pub struct Config {
     pub trust_proxy: bool,
     /// Allow a plain-HTTP public URL other than localhost (LAN without TLS).
     pub allow_http: bool,
+    /// Zero keeps history/audit records indefinitely.
+    pub history_retention_days: u32,
+    pub audit_retention_days: u32,
 }
 
 fn env_flag(name: &str) -> bool {
     std::env::var(name).is_ok_and(|v| matches!(v.trim(), "1" | "true" | "yes"))
+}
+
+fn env_days(name: &str) -> Result<u32> {
+    let text = std::env::var(name).unwrap_or_else(|_| "0".into());
+    let days =
+        text.parse::<u32>().with_context(|| format!("{name}: expected a number of days (0 keeps everything)"))?;
+    if days > 36_500 {
+        bail!("{name}: must be at most 36500");
+    }
+    Ok(days)
 }
 
 impl Config {
@@ -31,6 +44,8 @@ impl Config {
             data_dir: std::env::var("WCS_DATA_DIR").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("data")),
             trust_proxy: env_flag("WCS_TRUST_PROXY"),
             allow_http: env_flag("WCS_ALLOW_HTTP"),
+            history_retention_days: env_days("WCS_HISTORY_RETENTION_DAYS")?,
+            audit_retention_days: env_days("WCS_AUDIT_RETENTION_DAYS")?,
         };
         config.validate()?;
         Ok(config)
@@ -73,6 +88,8 @@ impl Config {
             data_dir: dir.to_path_buf(),
             trust_proxy: false,
             allow_http: false,
+            history_retention_days: 0,
+            audit_retention_days: 0,
         }
     }
 }
