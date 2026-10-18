@@ -34,7 +34,7 @@ transcription:
     apiKey: ${ELEVENLABS_API_KEY}
     model: scribe_v2
     keyterms: true         # send the dictionary as keyterms (+$0.05 per audio hour)
-    noVerbatim: false      # let Scribe itself remove filler words and false starts
+    noVerbatim: true       # let Scribe itself remove filler words and false starts
   openai:
     apiKey: ${OPENAI_API_KEY}
     baseUrl: https://api.openai.com/v1
@@ -42,7 +42,7 @@ transcription:
     prompt: ""                 # optional context; dictionary terms are appended automatically
 
 polish:
-  enabled: true
+  enabled: false
   # Any OpenAI-compatible Chat Completions endpoint works, e.g.
   #   Groq:       https://api.groq.com/openai/v1
   #   OpenRouter: https://openrouter.ai/api/v1

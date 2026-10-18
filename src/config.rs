@@ -139,7 +139,7 @@ impl Default for ElevenLabsConfig {
             base_url: "https://api.elevenlabs.io".into(),
             model: "scribe_v2".into(),
             keyterms: true,
-            no_verbatim: false,
+            no_verbatim: true,
         }
     }
 }
@@ -208,7 +208,7 @@ pub struct PolishConfig {
 impl Default for PolishConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             api_key: None,
             base_url: "https://api.openai.com/v1".into(),
             model: "gpt-6-luna".into(),
