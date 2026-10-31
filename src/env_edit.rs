@@ -88,17 +88,10 @@ pub fn set_var(file: &Path, name: &str, value: &str) -> Result<()> {
     };
     let updated = set_in_text(&text, name, value).map_err(|e| anyhow!("{}: {e}", file.display()))?;
     if updated == text {
+        crate::private_file::protect(file)?;
         return Ok(());
     }
-    let existed = file.exists();
-    std::fs::write(file, updated).map_err(|e| anyhow!("can't write {}: {e}", file.display()))?;
-    #[cfg(unix)]
-    if !existed {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600));
-    }
-    #[cfg(not(unix))]
-    let _ = existed;
+    crate::private_file::write(file, updated).map_err(|e| anyhow!("can't write {}: {e}", file.display()))?;
     Ok(())
 }
 

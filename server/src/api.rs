@@ -104,10 +104,7 @@ async fn me(State(state): State<SharedState>, auth: DeviceAuth) -> ApiResult<Jso
 fn validate_keyring(req: &PutKeyringRequest) -> Result<(), ApiError> {
     let salt_ok = wisprcheap_sync::crypto::unb64(&req.salt).is_ok_and(|s| s.len() == 16);
     let kdf = &req.kdf;
-    let kdf_ok = kdf.alg == "argon2id"
-        && (8_192..=1_048_576).contains(&kdf.m)
-        && (1..=10).contains(&kdf.t)
-        && (1..=8).contains(&kdf.p);
+    let kdf_ok = kdf.validate().is_ok() && kdf.m >= 8_192;
     let key_id_ok = req.key_id.len() == 16 && wisprcheap_sync::crypto::unb64(&req.key_id).is_ok();
     if !salt_ok || !kdf_ok || !key_id_ok || !req.wrapped_key.starts_with("e1.") || req.wrapped_key.len() > 200 {
         return Err(ApiError::bad_request("invalid keyring"));

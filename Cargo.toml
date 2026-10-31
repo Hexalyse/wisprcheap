@@ -11,6 +11,12 @@ default-run = "wisprcheap"
 [workspace]
 members = ["sync", "server", "desktop-ui"]
 default-members = [".", "desktop-ui"]
+exclude = ["vendor/glib"]
+
+# GTK3 requires GLib 0.18. This copy carries the upstream memory-safety backport.
+# See vendor/glib/SECURITY-PATCH.md; remove it when the Linux GTK3 stack is migrated.
+[patch.crates-io]
+glib = { path = "vendor/glib" }
 
 [[bin]]
 name = "wisprcheap"

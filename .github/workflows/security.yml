@@ -1,0 +1,29 @@
+name: Security
+
+on:
+  push:
+    branches: [master]
+    paths: ["Cargo.toml", "Cargo.lock", "vendor/**", ".github/workflows/security.yml"]
+  pull_request:
+    paths: ["Cargo.toml", "Cargo.lock", "vendor/**", ".github/workflows/security.yml"]
+  schedule:
+    - cron: "25 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Cargo Audit
+        run: cargo install cargo-audit --locked --version 0.22.2
+      - name: Audit dependencies (including all target platforms)
+        run: cargo audit
+      - name: Install GLib development libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libglib2.0-dev pkg-config
+      - name: Test GLib security backport with optimizations
+        run: cargo test --manifest-path vendor/glib/Cargo.toml --release --lib variant_iter::tests

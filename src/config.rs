@@ -1038,13 +1038,15 @@ fn load_config_inner(args: &ConfigArgs, text: Option<&str>) -> Result<(LoadedCon
 /// The config file to create/edit: the one in use, or the app's config.yaml (created from the example).
 pub fn ensure_config_file(config_path: Option<&Path>) -> Result<PathBuf> {
     if let Some(p) = config_path {
+        crate::private_file::protect(p)?;
         return Ok(p.to_path_buf());
     }
     let file = paths().app_dir.join("config.yaml");
     if !file.exists() {
         std::fs::create_dir_all(&paths().app_dir)?;
-        std::fs::write(&file, EXAMPLE_CONFIG)?;
+        crate::private_file::write(&file, EXAMPLE_CONFIG)?;
     }
+    crate::private_file::protect(&file)?;
     Ok(file)
 }
 

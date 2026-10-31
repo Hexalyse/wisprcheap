@@ -188,7 +188,7 @@ fn edit_config(loaded: &LoadedConfig, edit: impl FnOnce(&mut YamlText) -> Result
     let mut y = YamlText::new(text.clone());
     edit(&mut y).map_err(|e| anyhow!("can't update {}: {e}", file.display()))?;
     if y.as_str() != text {
-        std::fs::write(&file, y.as_str()).map_err(|e| anyhow!("can't write {}: {e}", file.display()))?;
+        crate::private_file::write(&file, y.as_str()).map_err(|e| anyhow!("can't write {}: {e}", file.display()))?;
     }
     Ok(file)
 }

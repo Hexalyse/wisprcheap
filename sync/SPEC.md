@@ -42,6 +42,10 @@ directly) and the Android client (a Kotlin port). Every implementation must pass
   - `pair`: `"<from or auto>><to>"` (e.g. `fr>en`, `auto>en`);
   - `price`: the model name.
 - A wrong passphrase makes the wrapped key fail to decrypt.
+- Before deriving a passphrase key, clients reject KDF parameters outside `argon2id`,
+  `8*p <= m <= 65536` KiB, `1 <= t <= 10`, `1 <= p <= 8`, or a salt other than 16 bytes.
+  The server additionally requires `m >= 8192`. These bounds prevent a malicious keyring from
+  requesting unbounded memory or CPU on clients. Default parameters are unchanged.
 - A different `keyId` in the keyring than the device's own DK means the encryption was reset. The
   device must forget DK, ask for the passphrase and re-upload its profile.
 

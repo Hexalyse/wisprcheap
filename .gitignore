@@ -6,3 +6,5 @@ history.jsonl
 recordings/
 wisprcheap.log*
 
+vendor/glib/Cargo.lock
+vendor/glib/target/

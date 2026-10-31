@@ -60,6 +60,9 @@ impl<E: Into<anyhow::Error>> From<E> for WebError {
 
 impl IntoResponse for WebError {
     fn into_response(self) -> Response {
+        if self.0.is::<auth::PasswordWorkBusy>() {
+            return (StatusCode::TOO_MANY_REQUESTS, [(header::RETRY_AFTER, "1")], "Password service is busy. Try again shortly.").into_response();
+        }
         tracing::error!("web: {:#}", self.0);
         (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response()
     }
@@ -164,12 +167,12 @@ fn thousands(n: u64) -> String {
     out
 }
 
-async fn verify(password: String, hash: String) -> bool {
-    tokio::task::spawn_blocking(move || verify_password(&password, &hash)).await.unwrap_or(false)
+async fn verify(state: &SharedState, password: String, hash: String) -> Result<bool, WebError> {
+    Ok(state.password_work(move || verify_password(&password, &hash)).await?)
 }
 
-async fn hash(password: String) -> anyhow::Result<String> {
-    tokio::task::spawn_blocking(move || hash_password(&password)).await?
+async fn hash(state: &SharedState, password: String) -> anyhow::Result<String> {
+    state.password_work(move || hash_password(&password)).await?
 }
 
 #[derive(Template)]
@@ -265,6 +268,12 @@ async fn login(
     let page_name = name.clone();
     let page =
         move |error: String| LoginPage { nav: None, version: VERSION, error: Some(error), username: page_name.clone() };
+    if check_username(&name).is_err() || f.password.len() > auth::MAX_PASSWORD_BYTES {
+        return render(&page("Wrong username or password.".into()));
+    }
+    if !state.limiter.allow(&format!("login-attempt-ip:{ip}"), 30, std::time::Duration::from_secs(60)) {
+        return Ok((StatusCode::TOO_MANY_REQUESTS, "Too many login attempts. Try again shortly.").into_response());
+    }
     if let Some(wait) = keys.iter().filter_map(|k| state.limiter.login_blocked(k)).max() {
         return render(&page(format!("Too many failed attempts. Try again in {} s.", wait.as_secs() + 1)));
     }
@@ -272,11 +281,14 @@ async fn login(
     let (user, stored) = state
         .blocking(move |state| -> anyhow::Result<_> {
             let user = db::user_by_name(&state.db.lock(), &lookup_name)?;
-            let stored = user.as_ref().map(|u| u.password_hash.clone()).unwrap_or_else(|| dummy_hash().to_string());
+            let stored = user.as_ref().map(|u| u.password_hash.clone());
             Ok((user, stored))
         })
         .await??;
-    let ok = verify(f.password, stored).await;
+    // Dummy-hash initialization also runs under the password-work budget.
+    let ok = state.password_work(move || {
+        verify_password(&f.password, stored.as_deref().unwrap_or_else(|| dummy_hash()))
+    }).await?;
     state
         .blocking(move |state| -> WebResult {
             let conn = state.db.lock();
@@ -431,7 +443,7 @@ async fn setup(
     if let Err(e) = check_username(&username).and_then(|_| check_new_password(&username, &f.password, &f.confirm)) {
         return setup_form(&token, Some(e), username);
     }
-    let hashed = hash(f.password).await?;
+    let hashed = hash(&state, f.password).await?;
     state
         .blocking(move |state| -> WebResult {
             let conn = state.db.lock();
@@ -527,7 +539,7 @@ async fn invite_submit(
         if let Err(e) = check_new_password(&user.username, &f.password, &f.confirm) {
             return invite_form(&code, Some(user.username), Some(e), String::new());
         }
-        let hashed = hash(f.password).await?;
+        let hashed = hash(&state, f.password).await?;
         return state
             .blocking(move |state| -> WebResult {
                 let conn = state.db.lock();
@@ -564,7 +576,7 @@ async fn invite_submit(
     if state.blocking(move |state| db::user_by_name(&state.db.lock(), &lookup_name)).await??.is_some() {
         return invite_form(&code, None, Some("This username is taken.".into()), username);
     }
-    let hashed = hash(f.password).await?;
+    let hashed = hash(&state, f.password).await?;
     state
         .blocking(move |state| -> WebResult {
             let conn = state.db.lock();
@@ -1220,13 +1232,13 @@ async fn change_password(
     if let Some(denied) = check_form(&state, &headers, &s, &f.csrf) {
         return Ok(denied);
     }
-    if !verify(f.current, s.user.password_hash.clone()).await {
+    if !verify(&state, f.current, s.user.password_hash.clone()).await? {
         return account_page(&state, &s, None, Some("The current password is wrong.")).await;
     }
     if let Err(e) = check_new_password(&s.user.username, &f.password, &f.confirm) {
         return account_page(&state, &s, None, Some(&e)).await;
     }
-    let hashed = hash(f.password).await?;
+    let hashed = hash(&state, f.password).await?;
     let write_session = s.clone();
     state
         .blocking(move |state| -> anyhow::Result<()> {
@@ -1272,7 +1284,7 @@ async fn reset_encryption(
     if let Some(denied) = check_form(&state, &headers, &s, &f.csrf) {
         return Ok(denied);
     }
-    if f.confirm != "RESET" || !verify(f.password, s.user.password_hash.clone()).await {
+    if f.confirm != "RESET" || !verify(&state, f.password, s.user.password_hash.clone()).await? {
         return account_page(&state, &s, None, Some("Type RESET and your password to reset the encryption.")).await;
     }
     let write_session = s.clone();
@@ -1303,7 +1315,7 @@ async fn delete_account(
     if let Some(denied) = check_form(&state, &headers, &s, &f.csrf) {
         return Ok(denied);
     }
-    if f.confirm != "DELETE" || !verify(f.password, s.user.password_hash.clone()).await {
+    if f.confirm != "DELETE" || !verify(&state, f.password, s.user.password_hash.clone()).await? {
         return account_page(&state, &s, None, Some("Type DELETE and your password to delete the account.")).await;
     }
     if s.user.is_admin {

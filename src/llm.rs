@@ -25,6 +25,8 @@ pub fn client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
+            // Redirects can forward audio/text and nonstandard credentials such as xi-api-key.
+            .redirect(reqwest::redirect::Policy::none())
             .user_agent(concat!("wisprcheap/", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("HTTP client")

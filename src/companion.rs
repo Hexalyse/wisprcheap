@@ -662,6 +662,8 @@ pub fn save_config(
         .ok_or_else(|| anyhow!("Config has no parent directory"))?;
     std::fs::create_dir_all(parent)?;
     let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    // On Unix, keep the temporary file's private 0600 mode: the config contains credentials.
+    #[cfg(not(unix))]
     if path.exists() {
         file.as_file()
             .set_permissions(std::fs::metadata(&path)?.permissions())?;

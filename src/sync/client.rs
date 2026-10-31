@@ -10,6 +10,9 @@ use wisprcheap_sync::protocol::{
     PutKeyringRequest, PutKeyringResponse, RenameDeviceRequest, StatsResponse, SyncReportRequest,
 };
 
+// The protocol caps pull pages at 1 MiB. Leave room for compatible extensions, but bound untrusted servers.
+const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+
 #[derive(Debug, Clone)]
 pub enum ApiError {
     /// The token was revoked (or the account disabled).
@@ -150,11 +153,13 @@ impl Client {
 
 fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
+        // Pairing codes and sync payloads must stay at the configured endpoint.
+        .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(60))
         .user_agent(format!("wisprcheap/{}", env!("CARGO_PKG_VERSION")))
         .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
+        .expect("sync HTTP client")
 }
 
 /// `POST /v1/pair` (no token yet).
@@ -170,7 +175,8 @@ async fn response(r: RequestBuilder) -> Result<reqwest::Response, ApiError> {
         return Err(ApiError::Unauthorized);
     }
     if !status.is_success() {
-        let text = res.text().await.unwrap_or_default();
+        let bytes = bounded_body(res).await?;
+        let text = String::from_utf8_lossy(&bytes);
         let body: Option<ErrorBody> = serde_json::from_str(&text).ok();
         return Err(ApiError::Status {
             status: status.as_u16(),
@@ -187,12 +193,34 @@ async fn response(r: RequestBuilder) -> Result<reqwest::Response, ApiError> {
 async fn send<T: DeserializeOwned>(r: RequestBuilder) -> Result<T, ApiError> {
     let res = response(r).await?;
     let status = res.status().as_u16();
-    let bytes = res.bytes().await.map_err(|e| ApiError::Network(describe(&e)))?;
+    let bytes = bounded_body(res).await?;
     serde_json::from_slice(&bytes).map_err(|e| ApiError::Status {
         status,
         code: "bad_response".into(),
         message: format!("unexpected answer from the server ({e}); is this a wisprcheap sync server?"),
     })
+}
+
+async fn bounded_body(mut res: reqwest::Response) -> Result<Vec<u8>, ApiError> {
+    let too_large = || ApiError::Status {
+        status: res.status().as_u16(),
+        code: "response_too_large".into(),
+        message: "the sync server response exceeds 2 MiB".into(),
+    };
+    if res.content_length().is_some_and(|n| n > MAX_RESPONSE_BYTES as u64) {
+        return Err(too_large());
+    }
+    let status = res.status().as_u16();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = res.chunk().await.map_err(|e| ApiError::Network(describe(&e)))? {
+        if chunk.len() > MAX_RESPONSE_BYTES - bytes.len() {
+            return Err(ApiError::Status {
+                status, code: "response_too_large".into(), message: "the sync server response exceeds 2 MiB".into(),
+            });
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 
 async fn send_empty(r: RequestBuilder) -> Result<(), ApiError> {
