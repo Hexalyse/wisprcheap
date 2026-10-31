@@ -7,15 +7,18 @@ Quitting dictation from the tray or CLI also requests a close of the companion f
 Unsaved edits retain their confirmation; a save already in progress finishes before the window closes.
 
 The companion uses Iced 0.14 with Tiny Skia, X11/Wayland window support, and no webview or GPU renderer.
-It is a separate Cargo package. `cargo tree -p wisprcheap -e normal` contains no Iced/Winit dependencies.
+It is a separate Cargo package. The background package has no Iced dependency; Winit is used only for
+the Windows native event loop, while Linux awaits the UI channel on GLib's main context.
 The optional UI polls runtime status every two seconds while open. History, config and log reads run
 on blocking workers, outside the dictation actor. The history view returns at most 200 matching entries;
 statistics cover all entries in the selected period. Refresh reloads activity and logs.
 
-The recording overlay uses the existing software renderer in native Win32/GTK windows. On Wayland,
-GTK Layer Shell anchors it above normal windows while preserving click-through and keyboard focus.
+The recording overlay uses the existing software renderer in native Win32/GTK4 windows. On Wayland,
+GTK4 Layer Shell anchors it above normal windows while preserving click-through and keyboard focus.
 The compositor selects the output; compositors without Layer Shell omit the overlay and log the reason.
-Linux build/runtime packages include GTK Layer Shell 0.6 or newer.
+Linux source builds require GTK4 Layer Shell 1.0 or newer. Linux release archives include it in `lib/`,
+resolved using an executable-relative RUNPATH. System GTK4 and ALSA remain runtime dependencies.
+The tray uses the GTK-free KSNI backend; neither GTK3 nor Tao is present in Cargo.lock.
 
 Settings is one continuous form with section headings and a persistent menu beside it.
 Menu items scroll to their section; scrolling the form updates the highlighted menu item.

@@ -1,5 +1,9 @@
 # Security review — 31 October 2026
 
+Follow-up: the [GTK4 migration](gtk4-migration.md) supersedes the GLib backport described below.
+GTK3, Tao, the old layer-shell bindings and GLib 0.18 have been removed from Cargo.lock, and native
+Linux validation now covers the replacement. This report records the original audit and initial fixes.
+
 ## Scope and result
 
 Reviewed the desktop client, desktop companion IPC, shared sync/crypto implementation,

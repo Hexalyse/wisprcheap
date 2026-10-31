@@ -4,8 +4,7 @@ RUN apk add --no-cache musl-dev
 WORKDIR /src
 # The workspace root is the desktop app: its sources are needed for Cargo to load the workspace,
 # but only the server is built.
-COPY Cargo.toml Cargo.lock ./
-COPY vendor vendor
+COPY Cargo.toml Cargo.lock build.rs ./
 COPY src src
 COPY desktop-ui desktop-ui
 COPY sync sync

@@ -5,6 +5,4 @@ config.yaml
 history.jsonl
 recordings/
 wisprcheap.log*
-
-vendor/glib/Cargo.lock
-vendor/glib/target/
+__pycache__/

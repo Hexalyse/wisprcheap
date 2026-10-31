@@ -2,17 +2,19 @@
 //! (with a live waveform), when it's working on the audio, and how it went. It never takes the focus and
 //! clicks go through it. The look follows the Android app's bubble.
 //!
-//! Drawn in software (`paint`), animated by `scene`, and shown by a layered window on Windows, a GTK popup
-//! on X11, or a native Layer Shell surface on supported Wayland compositors.
+//! Drawn in software (`paint`), animated by `scene`, and shown by a layered window on Windows, a GTK4
+//! surface with native X11 policy, or GTK4 Layer Shell on supported Wayland compositors.
 
 mod paint;
 mod scene;
+#[cfg(target_os = "linux")]
+mod x11;
 
 #[cfg(windows)]
 #[path = "windows.rs"]
 mod window;
 #[cfg(target_os = "linux")]
-#[path = "gtk.rs"]
+#[path = "gtk4.rs"]
 mod window;
 
 pub use window::Overlay;

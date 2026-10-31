@@ -3,9 +3,9 @@ name: Security
 on:
   push:
     branches: [master]
-    paths: ["Cargo.toml", "Cargo.lock", "vendor/**", ".github/workflows/security.yml"]
+    paths: ["Cargo.toml", "Cargo.lock", "tests/dependency_policy.py", ".github/workflows/security.yml"]
   pull_request:
-    paths: ["Cargo.toml", "Cargo.lock", "vendor/**", ".github/workflows/security.yml"]
+    paths: ["Cargo.toml", "Cargo.lock", "tests/dependency_policy.py", ".github/workflows/security.yml"]
   schedule:
     - cron: "25 7 * * 1"
   workflow_dispatch:
@@ -23,7 +23,5 @@ jobs:
         run: cargo install cargo-audit --locked --version 0.22.2
       - name: Audit dependencies (including all target platforms)
         run: cargo audit
-      - name: Install GLib development libraries
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libglib2.0-dev pkg-config
-      - name: Test GLib security backport with optimizations
-        run: cargo test --manifest-path vendor/glib/Cargo.toml --release --lib variant_iter::tests
+      - name: Reject GTK3 and obsolete GLib dependencies
+        run: python3 tests/dependency_policy.py

@@ -244,7 +244,13 @@ fn run(args: Args) -> i32 {
         return 0;
     }
 
-    let (event_loop, ui) = crate::tray::create_event_loop();
+    let (event_loop, ui) = match crate::tray::create_event_loop() {
+        Ok(value) => value,
+        Err(e) => {
+            crate::error!("Could not initialize the desktop event loop: {e}");
+            return 1;
+        }
+    };
     {
         let ui = ui.clone();
         logging::add_sink(move |line| ui.log(line));
@@ -257,7 +263,13 @@ fn run(args: Args) -> i32 {
             std::process::exit(1);
         }
     });
-    crate::tray::run(event_loop, ui, tray_tx, rt)
+    match crate::tray::run(event_loop, ui, tray_tx, rt) {
+        Ok(()) => 0,
+        Err(e) => {
+            crate::error!("Desktop event loop failed: {e}");
+            1
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -344,18 +356,15 @@ fn message_box(message: &str, is_error: bool) {
             } else {
                 gtk::MessageType::Info
             };
-            let dialog = gtk::MessageDialog::new(
-                None::<&gtk::Window>,
-                gtk::DialogFlags::MODAL,
-                kind,
-                gtk::ButtonsType::Ok,
-                message,
-            );
-            dialog.set_title("wisprcheap");
-            dialog.run();
-            unsafe {
-                dialog.destroy();
-            }
+            let dialog = gtk::MessageDialog::builder()
+                .message_type(kind)
+                .buttons(gtk::ButtonsType::Ok)
+                .text(message)
+                .title("wisprcheap")
+                .modal(true)
+                .build();
+            gtk::glib::MainContext::default().block_on(dialog.run_future());
+            dialog.destroy();
         } else {
             eprintln!("{message}");
         }

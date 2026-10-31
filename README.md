@@ -25,24 +25,26 @@ with the same config file, prompts, history format and tray menu, plus an option
 ## Download
 
 Prebuilt binaries for Windows and Linux (x86_64) are on the [releases page](https://github.com/Hexalyse/wisprcheap/releases).
-Extract the archive anywhere, then follow [Setup](#setup). On Linux, install the runtime libraries first
-(Debian/Ubuntu: `sudo apt install libgtk-3-0 libayatana-appindicator3-1 libasound2 libxdo3 libxkbcommon0 libxkbcommon-x11-0 libgtk-layer-shell0`).
+Extract the archive anywhere, then follow [Setup](#setup). Linux release binaries target **Ubuntu 24.04 or newer**
+(glibc 2.39+). Install the system runtime libraries first:
+`sudo apt install libgtk-4-1 libasound2t64 libxkbcommon0 libxkbcommon-x11-0 libxtst6`.
+Keep the archive's `lib/` directory next to both executables: it contains GTK4 Layer Shell and its license.
 
 Windows SmartScreen may warn about an unrecognized app the first time, because the executables aren't code-signed
 (**More info** > **Run anyway**).
 
 ## Build
 
-Requires Rust 1.88+ for the desktop companion (edition 2024).
+Requires Rust 1.92+ (edition 2024).
 
 **Windows**: nothing else (MSVC toolchain).
 
-**Linux** (X11 or Wayland session, see [Linux notes](#linux-notes)): the GTK 3, AppIndicator, ALSA, X11/XTest and xdo development packages. On Debian/Ubuntu:
+**Linux** (X11 or Wayland session, see [Linux notes](#linux-notes)): GTK4, GTK4 Layer Shell 1.0+,
+ALSA and X11/XTest development libraries. On Ubuntu 24.04, the same script used by CI installs the
+dependencies and builds GTK4 Layer Shell from a verified upstream revision:
 
 ```sh
-sudo apt install build-essential pkg-config libgtk-3-dev libayatana-appindicator3-dev \
-  libasound2-dev libx11-dev libxtst-dev libxi-dev libxdo-dev libdbus-1-dev \
-  libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libgtk-layer-shell-dev
+bash .github/scripts/install-linux-deps.sh
 ```
 
 Then:
@@ -124,8 +126,9 @@ says what happened; click it to open the log. Turn it off with `notifications.er
 
 ## Recording overlay
 
-The recording overlay uses native Win32/GTK windows, with Layer Shell on supported Wayland compositors.
-Iced runs only in the companion; the background executable does not depend on Iced, Winit or a webview.
+The recording overlay uses native Win32/GTK4 windows, with Layer Shell on supported Wayland compositors.
+Iced runs only in the companion. The background app uses Winit to pump native Windows messages and
+GLib on Linux; it does not load Iced or a webview. The Linux tray uses GTK-free KSNI over D-Bus.
 
 While you speak, a small pill at the bottom center of the screen (above the taskbar or panel)
 shows a live waveform: red with a microphone for a dictation, indigo with sparkles for a command, plus a
@@ -270,21 +273,26 @@ section of `config.yaml`: keep that file private, like `.env`.
   which is useful for manual end-to-end tests next to a real instance.
 - On Linux, `python3 tests/wayland_overlay.py` checks the actual native Wayland overlay in an isolated Sway
   session (install `sway grim xvfb xauth` first). It verifies click-through, focus, hide/show and scaling,
-  and writes screenshots and protocol logs to `target/wayland-overlay/`. The Linux release workflow runs it too.
+  and writes screenshots and protocol logs to `target/wayland-overlay/`. `python3 tests/x11_overlay.py`
+  checks placement, focus, click-through, scaling and the log window under Xvfb/Openbox/xcompmgr.
+  `python3 tests/ksni_tray.py` checks tray registration, live menus, activation and teardown on an isolated
+  D-Bus session without a display. CI and Linux releases run these checks. `python3 tests/dependency_policy.py`
+  prevents GTK3/Tao from returning to the lockfile.
 
 ### Linux notes
 
 - On X11, global hotkeys and key injection use XRecord / XTest, like the original libuiohook. No setup needed.
 - On Wayland, see [below](#wayland).
-- The tray uses AppIndicator / StatusNotifierItem. GNOME needs the "AppIndicator and KStatusNotifierItem Support" extension.
-  AppIndicators don't report left clicks: use **Open WisprCheap** in the menu, then **Session log** for logs. Notifications go through D-Bus
+- The tray uses StatusNotifierItem (KSNI) directly over D-Bus. GNOME needs the "AppIndicator and KStatusNotifierItem Support" extension.
+  Use **Open WisprCheap** in the menu, then **Session log** for logs. Notifications go through D-Bus
   (`org.freedesktop.Notifications`).
 - Without a display, the app runs without the tray icon and logs why.
 - The [recording overlay](#recording-overlay) works on X11 with compositing and on Wayland compositors that
   support Layer Shell (KDE Plasma, Sway, Hyprland and others). On Wayland, the compositor chooses the monitor;
   the pill is anchored at the bottom center, respects space reserved by panels, and doesn't take focus or intercept clicks.
   Compositors without Layer Shell, including GNOME, omit the overlay and explain why in the log; dictation still works.
-  Linux requires GTK Layer Shell 0.6 or newer (`libgtk-layer-shell0` on Debian/Ubuntu).
+  Linux requires GTK4 Layer Shell 1.0 or newer. Release archives bundle this library; source builds can
+  use a distribution package or the dependency script above. The GTK3 `libgtk-layer-shell0` package is unrelated.
 - The clipboard works on X11 and Wayland (data-control protocol, with XWayland's clipboard as the fallback).
 
 ### Wayland
