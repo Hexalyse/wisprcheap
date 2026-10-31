@@ -12,8 +12,9 @@ Reviewed Android separately in `C:\dev\wisprcheap-android`; its findings are in 
 `docs/security-review-2026-10-31.md`.
 
 Baseline: `Hexalyse/wisprcheap` commit `fb26a803e4e97d6825b709b5678819d7b125c088`.
-The checkout matched `origin/master` at the start of review. Fixes are local, uncommitted changes;
-no release, deployment, advisory dismissal or GitHub settings change was performed.
+The checkout matched `origin/master` at the start of review. At that point, fixes were local and
+uncommitted; no release, deployment, advisory dismissal or GitHub settings change had been performed.
+The follow-up release changes prepare desktop 1.6.0 and sync server 0.2.1 for publication.
 This was a source/dependency review and local regression test exercise, not a penetration test of a deployed instance.
 Severity estimates for newly found code issues below are review judgments, not assigned CVSS scores.
 

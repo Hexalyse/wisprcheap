@@ -1,5 +1,5 @@
 # Builds Windows and Linux binaries and publishes them as a GitHub release.
-# Release: bump `version` in Cargo.toml, commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
+# Release: bump Cargo.toml versions, add docs/releases/vX.Y.Z.md, commit, then tag and push vX.Y.Z.
 # Running it manually (Actions > Release > Run workflow) only builds the archives, without publishing.
 name: Release
 
@@ -57,7 +57,7 @@ jobs:
           key: ${{ matrix.name }}
 
       - name: Test
-        run: cargo test --release --locked
+        run: cargo test --release --locked --workspace
 
       - name: Test Wayland overlay
         if: runner.os == 'Linux'
@@ -114,6 +114,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: dist
@@ -126,4 +127,4 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes-file "docs/releases/$GITHUB_REF_NAME.md"
