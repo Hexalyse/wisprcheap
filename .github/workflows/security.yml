@@ -1,0 +1,27 @@
+name: Security
+
+on:
+  push:
+    branches: [master]
+    paths: ["Cargo.toml", "Cargo.lock", "tests/dependency_policy.py", ".github/workflows/security.yml"]
+  pull_request:
+    paths: ["Cargo.toml", "Cargo.lock", "tests/dependency_policy.py", ".github/workflows/security.yml"]
+  schedule:
+    - cron: "25 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Cargo Audit
+        run: cargo install cargo-audit --locked --version 0.22.2
+      - name: Audit dependencies (including all target platforms)
+        run: cargo audit
+      - name: Reject GTK3 and obsolete GLib dependencies
+        run: python3 tests/dependency_policy.py

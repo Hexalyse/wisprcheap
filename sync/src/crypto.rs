@@ -61,10 +61,27 @@ impl Default for KdfParams {
     }
 }
 
+impl KdfParams {
+    /// Validate untrusted keyring parameters before Argon2 allocates memory or starts work.
+    /// Keep the same limits in the Android implementation and the server.
+    pub fn validate(&self) -> Result<(), CryptoError> {
+        if self.alg != "argon2id"
+            || !(1..=8).contains(&self.p)
+            || !(1..=10).contains(&self.t)
+            || self.m < 8 * self.p
+            || self.m > 65_536
+        {
+            return Err(CryptoError::Kdf("unsupported Argon2 parameters (maximum 64 MiB, 10 iterations, 8 lanes)".into()));
+        }
+        Ok(())
+    }
+}
+
 /// PK = Argon2id(NFC(passphrase), salt) → 32 bytes.
 pub fn derive_passphrase_key(passphrase: &str, salt: &[u8], params: &KdfParams) -> Result<[u8; 32], CryptoError> {
-    if params.alg != "argon2id" {
-        return Err(CryptoError::Kdf(format!("unsupported algorithm {}", params.alg)));
+    params.validate()?;
+    if salt.len() != 16 {
+        return Err(CryptoError::Kdf("the keyring salt must be 16 bytes".into()));
     }
     let normalized: String = passphrase.nfc().collect();
     let p = argon2::Params::new(params.m, params.t, params.p, Some(32)).map_err(|e| CryptoError::Kdf(e.to_string()))?;
@@ -238,6 +255,25 @@ mod tests {
 
     fn fast() -> KdfParams {
         KdfParams { alg: "argon2id".into(), m: 1024, t: 1, p: 1 }
+    }
+
+    #[test]
+    fn rejects_hostile_keyring_parameters_before_derivation() {
+        let salt = [0; 16];
+        for params in [
+            KdfParams { m: u32::MAX, ..fast() },
+            KdfParams { m: 65_537, ..fast() },
+            KdfParams { t: u32::MAX, ..fast() },
+            KdfParams { p: u32::MAX, ..fast() },
+            KdfParams { m: 7, ..fast() },
+            KdfParams { p: 0, ..fast() },
+            KdfParams { t: 0, ..fast() },
+            KdfParams { alg: "argon2i".into(), ..fast() },
+        ] {
+            assert!(matches!(derive_passphrase_key("password", &salt, &params), Err(CryptoError::Kdf(_))));
+        }
+        assert!(derive_passphrase_key("password", &[], &fast()).is_err());
+        assert!(KdfParams::default().validate().is_ok());
     }
 
     #[test]

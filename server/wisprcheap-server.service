@@ -22,6 +22,7 @@ ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/wisprcheap
 PrivateTmp=true
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

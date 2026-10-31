@@ -137,12 +137,40 @@ pub struct Db {
     path: PathBuf,
 }
 
+/// SQLite and its backups contain password hashes and private account metadata.
+fn private_connection(path: &Path) -> Result<Connection> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let file = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false)
+            .mode(0o600).open(path)?;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        // Existing SQLite sidecars can predate the permission fix. New ones inherit the DB mode.
+        for suffix in ["-wal", "-shm"] {
+            let mut sidecar = path.as_os_str().to_os_string();
+            sidecar.push(suffix);
+            match std::fs::set_permissions(Path::new(&sidecar), std::fs::Permissions::from_mode(0o600)) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+                _ => {}
+            }
+        }
+    }
+    Ok(Connection::open(path)?)
+}
+
 impl Db {
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+            let mut builder = std::fs::DirBuilder::new();
+            builder.recursive(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                builder.mode(0o700);
+            }
+            builder.create(dir).with_context(|| format!("creating {}", dir.display()))?;
         }
-        let conn = Connection::open(path).with_context(|| format!("opening {}", path.display()))?;
+        let conn = private_connection(path).with_context(|| format!("opening {}", path.display()))?;
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;")?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         for (i, sql) in MIGRATIONS.iter().enumerate().skip(version as usize) {
@@ -164,7 +192,7 @@ impl Db {
         // A separate source connection lets sync requests continue during online backups.
         let conn = Connection::open(&self.path)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
-        let mut dst = Connection::open(target)?;
+        let mut dst = private_connection(target)?;
         let backup = rusqlite::backup::Backup::new(&conn, &mut dst)?;
         backup.run_to_completion(256, std::time::Duration::from_millis(10), None)?;
         Ok(())
@@ -617,6 +645,24 @@ pub fn meta_delete(conn: &Connection, key: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn database_and_backups_are_private_even_after_reopening_public_files() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data").join("db.sqlite");
+        let database = Db::open(&path).unwrap();
+        let backup = dir.path().join("backup.sqlite");
+        database.backup_to(&backup).unwrap();
+        for file in [&path, &backup] {
+            assert_eq!(std::fs::metadata(file).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        drop(database);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let _database = Db::open(&path).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+
     #[test]
     fn migrates_existing_history_and_indexes_only_once() {
         let dir = tempfile::tempdir().unwrap();

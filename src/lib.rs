@@ -24,6 +24,7 @@ pub mod overlay;
 pub mod paths;
 pub mod polish;
 pub mod pricing;
+pub(crate) mod private_file;
 pub mod recorder;
 pub mod sounds;
 pub mod state;

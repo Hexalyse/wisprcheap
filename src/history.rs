@@ -1,6 +1,6 @@
 //! Dictation history (`history.jsonl`), monthly totals and saved failed audio.
 
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -201,10 +201,7 @@ impl History {
                 fs::create_dir_all(dir)?;
             }
             let line = serde_json::to_string(entry).map_err(std::io::Error::other)?;
-            let mut f = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&self.file)?;
+            let mut f = crate::private_file::append(&self.file)?;
             writeln!(f, "{line}")
         })();
         if let Err(e) = result {
@@ -219,8 +216,10 @@ impl History {
         }
         let name = format!("failed-{}.wav", iso_timestamp(ts).replace([':', '.'], "-"));
         let file = self.audio_dir.join(name);
-        let result =
-            fs::create_dir_all(&self.audio_dir).and_then(|_| fs::write(&file, encode_wav(pcm)));
+        let result = (|| -> anyhow::Result<()> {
+            fs::create_dir_all(&self.audio_dir)?;
+            crate::private_file::write(&file, encode_wav(pcm))
+        })();
         match result {
             Ok(()) => Some(file.to_string_lossy().into_owned()),
             Err(e) => {

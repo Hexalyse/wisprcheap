@@ -493,10 +493,10 @@ pub fn apply(
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "config.yaml".into());
             let copy = config_file.with_file_name(format!("{name}.bak-{stamp}"));
-            std::fs::write(&copy, &original)
+            crate::private_file::write(&copy, &original)
                 .map_err(|e| anyhow!("can't back up the config to {}: {e}", copy.display()))?;
         }
-        std::fs::write(&config_file, y.as_str())
+        crate::private_file::write(&config_file, y.as_str())
             .map_err(|e| anyhow!("can't write {}: {e}", config_file.display()))?;
         report.files_changed = true;
     }

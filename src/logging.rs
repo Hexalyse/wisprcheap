@@ -1,6 +1,6 @@
 //! Console output teed into `wisprcheap.log` (rotated at 1 MB) and registered sinks (the tray's log window).
 
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, RwLock};
@@ -27,6 +27,7 @@ pub fn setup(file: &Path) {
     if let Some(dir) = file.parent() {
         let _ = fs::create_dir_all(dir);
     }
+    let _ = crate::private_file::protect(file);
     if let Ok(meta) = fs::metadata(file)
         && meta.len() > MAX_BYTES
     {
@@ -53,7 +54,7 @@ pub fn emit(text: &str, to_stderr: bool) {
         let _ = writeln!(std::io::stdout().lock(), "{text}");
     }
     if let Some(file) = LOG_FILE.lock().unwrap().as_ref()
-        && let Ok(mut f) = OpenOptions::new().create(true).append(true).open(file)
+        && let Ok(mut f) = crate::private_file::append(file)
     {
         let _ = writeln!(f, "{text}");
     }

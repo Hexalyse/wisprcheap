@@ -51,7 +51,7 @@ unit.
 | `WCS_PUBLIC_URL` | `http://localhost:8080` | Public base URL (https:// in production) |
 | `WCS_BIND` | `0.0.0.0:8080` | Listen address |
 | `WCS_DATA_DIR` | `data` (`/data` in Docker) | Database and backups |
-| `WCS_TRUST_PROXY` | off | Use `X-Forwarded-For` for rate limits and logs (only behind a proxy) |
+| `WCS_TRUST_PROXY` | off | Use the rightmost `X-Forwarded-For` address for rate limits and logs. Only enable behind one trusted proxy that appends the real client address or overwrites the header; block direct access to the backend. With multiple proxies, this deliberately uses the nearest upstream hop. |
 | `WCS_ALLOW_HTTP` | off | Allow a plain-HTTP public URL (LAN without TLS) |
 | `WCS_BACKUP_DAILY` | off | Daily consistent backup into `<data dir>/backups` (keeps 7) |
 | `WCS_HISTORY_RETENTION_DAYS` | `0` | Remove server history older than this many days; `0` keeps it indefinitely |

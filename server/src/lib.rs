@@ -29,6 +29,7 @@ pub struct AppState {
     pub db: Db,
     pub limiter: auth::RateLimiter,
     blocking_slots: Arc<tokio::sync::Semaphore>,
+    password_slots: Arc<tokio::sync::Semaphore>,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -40,7 +41,21 @@ impl AppState {
             db,
             limiter: auth::RateLimiter::default(),
             blocking_slots: Arc::new(tokio::sync::Semaphore::new(8)),
+            password_slots: Arc::new(tokio::sync::Semaphore::new(2)),
         })
+    }
+
+    /// Reject excess password work instead of queuing unbounded expensive Argon2 jobs.
+    pub async fn password_work<R: Send + 'static>(
+        self: &SharedState,
+        job: impl FnOnce() -> R + Send + 'static,
+    ) -> anyhow::Result<R> {
+        let permit = self.password_slots.clone().try_acquire_owned().map_err(|_| auth::PasswordWorkBusy)?;
+        Ok(tokio::task::spawn_blocking(move || {
+            // Keep the permit even if the request is cancelled: blocking work continues running.
+            let _permit = permit;
+            job()
+        }).await?)
     }
 
     /// SQLite and filesystem work must not block Tokio's network workers.
@@ -100,4 +115,33 @@ async fn security_headers(State(state): State<SharedState>, req: Request, next: 
         h.insert(header::STRICT_TRANSPORT_SECURITY, HeaderValue::from_static("max-age=31536000"));
     }
     res
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn password_saturation_rejects_work_and_keeps_server_responsive() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config::for_tests(dir.path());
+        let db = Db::open(&config.db_path()).unwrap();
+        let state = AppState::new(config, db);
+        let permits = state.password_slots.clone().try_acquire_many_owned(2).unwrap();
+        let router = app(state.clone());
+        let response = router.clone().oneshot(Request::builder()
+            .method("POST").uri("/login")
+            .header("origin", "http://localhost:8080")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from("username=ghost&password=a+long+enough+password")).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers()["retry-after"], "1");
+        let response = router.oneshot(Request::builder().uri("/readyz").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        drop(permits);
+        assert_eq!(state.password_work(|| 42).await.unwrap(), 42);
+    }
 }

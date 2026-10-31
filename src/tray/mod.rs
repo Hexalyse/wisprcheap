@@ -2,10 +2,7 @@
 //! event loop.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-
-use tao::event::Event;
-use tao::event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopProxy};
+use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
@@ -20,7 +17,17 @@ mod logwin;
 #[path = "logwin_gtk.rs"]
 mod logwin;
 
+#[cfg(all(test, target_os = "linux"))]
+mod ksni_tests;
 mod notify;
+
+#[cfg(windows)]
+#[path = "event_loop_windows.rs"]
+mod platform;
+#[cfg(target_os = "linux")]
+#[path = "event_loop_linux.rs"]
+mod platform;
+pub use platform::EventLoop;
 
 /// Lines kept in the log window (also while it's hidden).
 pub const LOG_LINES: usize = 3000;
@@ -60,7 +67,7 @@ pub enum TrayAction {
 /// Handle used by the app (any thread) to drive the UI.
 #[derive(Clone)]
 pub struct Ui {
-    proxy: Arc<Mutex<EventLoopProxy<UiEvent>>>,
+    send: Arc<dyn Fn(UiEvent) + Send + Sync>,
 }
 
 fn one_line(s: &str) -> String {
@@ -69,7 +76,7 @@ fn one_line(s: &str) -> String {
 
 impl Ui {
     fn send(&self, event: UiEvent) {
-        let _ = self.proxy.lock().unwrap().send_event(event);
+        (self.send)(event);
     }
 
     pub fn set_state(&self, icon: IconName, text: &str) {
@@ -120,12 +127,8 @@ impl Ui {
     }
 }
 
-pub fn create_event_loop() -> (EventLoop<UiEvent>, Ui) {
-    let event_loop = EventLoopBuilder::<UiEvent>::with_user_event().build();
-    let ui = Ui {
-        proxy: Arc::new(Mutex::new(event_loop.create_proxy())),
-    };
-    (event_loop, ui)
+pub fn create_event_loop() -> anyhow::Result<(EventLoop, Ui)> {
+    platform::create()
 }
 
 struct Icons {
@@ -287,13 +290,15 @@ fn menu_action(id: &str) -> Option<TrayAction> {
     })
 }
 
-/// Run the UI event loop on the main thread (never returns).
+/// Run the UI event loop on the main thread until the dictation actor requests exit.
 pub fn run(
-    event_loop: EventLoop<UiEvent>,
+    event_loop: EventLoop,
     ui: Ui,
     actions: UnboundedSender<TrayAction>,
     keep_alive: impl Send + 'static,
-) -> ! {
+) -> anyhow::Result<()> {
+    // Drop the runtime only after the UI has shut down and removed its native windows.
+    let _keep_alive = keep_alive;
     let icon_dir: PathBuf = write_icons(&crate::paths::icon_dir());
 
     {
@@ -322,14 +327,12 @@ pub fn run(
     let mut tray: Option<Tray> = None;
     let mut log_window = logwin::LogWindow::new(icon_dir.clone(), Box::new(|| {}));
     let notify_ui = ui.clone();
-    let mut tray_failed = false;
+    let mut started = false;
     let mut overlay = Overlay::new();
 
-    event_loop.run(move |event, _target, control_flow| {
-        // The app's runtime lives as long as the event loop.
-        let _ = &keep_alive;
-        *control_flow = ControlFlow::Wait;
-        if tray.is_none() && !tray_failed {
+    platform::run(event_loop, move |event| {
+        if !started {
+            started = true;
             match Tray::new(&icon_dir) {
                 Ok(t) => {
                     notify::init(&t.icon, {
@@ -339,15 +342,14 @@ pub fn run(
                     tray = Some(t);
                 }
                 Err(e) => {
-                    tray_failed = true;
                     crate::warn!(
                         "[tray] Could not create the tray icon: {e}\n  Dictation keeps working. Use `wisprcheap stop` to quit."
                     );
                 }
             }
         }
-        let Event::UserEvent(event) = event else {
-            return;
+        let Some(event) = event else {
+            return false;
         };
         match event {
             UiEvent::State(name, text) => {
@@ -389,9 +391,9 @@ pub fn run(
                 overlay.destroy();
                 log_window.destroy();
                 tray = None; // removes the icon
-                tray_failed = true; // don't re-create it
-                *control_flow = ControlFlow::Exit;
+                return true;
             }
         }
+        false
     })
 }

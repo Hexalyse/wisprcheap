@@ -17,6 +17,19 @@ use crate::db::{self, Device, User};
 use crate::error::ApiError;
 
 pub const MIN_PASSWORD_LEN: usize = 12;
+pub const MAX_PASSWORD_BYTES: usize = 1024;
+const MAX_RATE_LIMIT_KEYS: usize = 10_000;
+
+#[derive(Debug)]
+pub struct PasswordWorkBusy;
+
+impl std::fmt::Display for PasswordWorkBusy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("password service is busy; try again shortly")
+    }
+}
+
+impl std::error::Error for PasswordWorkBusy {}
 
 fn argon2() -> Argon2<'static> {
     // OWASP minimum for Argon2id: 19 MiB, 2 iterations, 1 lane.
@@ -25,6 +38,9 @@ fn argon2() -> Argon2<'static> {
 
 /// PHC string (`$argon2id$v=19$m=…`), so parameters can change later.
 pub fn hash_password(password: &str) -> Result<String> {
+    if password.len() > MAX_PASSWORD_BYTES {
+        return Err(anyhow!("password must be at most {MAX_PASSWORD_BYTES} bytes"));
+    }
     let salt = crate::util::random_bytes::<16>();
     Ok(argon2()
         .hash_password_with_salt(password.as_bytes(), &salt)
@@ -33,6 +49,9 @@ pub fn hash_password(password: &str) -> Result<String> {
 }
 
 pub fn verify_password(password: &str, hash: &str) -> bool {
+    if password.len() > MAX_PASSWORD_BYTES {
+        return false;
+    }
     PasswordVerifier::<str>::verify_password(&argon2(), password.as_bytes(), hash).is_ok()
 }
 
@@ -43,6 +62,9 @@ pub fn dummy_hash() -> &'static str {
 }
 
 pub fn check_password_rules(username: &str, password: &str) -> Result<(), String> {
+    if password.len() > MAX_PASSWORD_BYTES {
+        return Err(format!("The password must be at most {MAX_PASSWORD_BYTES} bytes."));
+    }
     if password.chars().count() < MIN_PASSWORD_LEN {
         return Err(format!("The password must have at least {MIN_PASSWORD_LEN} characters."));
     }
@@ -71,12 +93,15 @@ impl RateLimiter {
     pub fn allow(&self, key: &str, max: u32, window: Duration) -> bool {
         let mut map = self.windows.lock().unwrap_or_else(|p| p.into_inner());
         let now = Instant::now();
-        if map.len() > 10_000 {
-            map.retain(|_, (start, _)| now.duration_since(*start) < window);
+        if map.len() >= MAX_RATE_LIMIT_KEYS {
+            map.retain(|_, (expires, _)| *expires > now);
+            if map.len() >= MAX_RATE_LIMIT_KEYS && !map.contains_key(key) {
+                return false;
+            }
         }
-        let entry = map.entry(key.to_string()).or_insert((now, 0));
-        if now.duration_since(entry.0) >= window {
-            *entry = (now, 0);
+        let entry = map.entry(key.to_string()).or_insert((now + window, 0));
+        if now >= entry.0 {
+            *entry = (now + window, 0);
         }
         entry.1 = entry.1.saturating_add(1);
         entry.1 <= max
@@ -96,6 +121,12 @@ impl RateLimiter {
 
     pub fn login_failed(&self, key: &str) {
         let mut map = self.failures.lock().unwrap_or_else(|p| p.into_inner());
+        if map.len() >= MAX_RATE_LIMIT_KEYS {
+            map.retain(|_, (_, at)| at.elapsed() < Duration::from_secs(3600));
+            if map.len() >= MAX_RATE_LIMIT_KEYS && !map.contains_key(key) {
+                return;
+            }
+        }
         let entry = map.entry(key.to_string()).or_insert((0, Instant::now()));
         entry.0 = entry.0.saturating_add(1);
         entry.1 = Instant::now();
@@ -109,7 +140,7 @@ impl RateLimiter {
         self.windows
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .retain(|_, (at, _)| at.elapsed() < Duration::from_secs(3600));
+            .retain(|_, (expires, _)| *expires > Instant::now());
         self.failures
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -117,17 +148,18 @@ impl RateLimiter {
     }
 }
 
-/// Client address: the socket peer, or the first `X-Forwarded-For` hop behind a trusted proxy.
+/// Client address: the socket peer, or the rightmost `X-Forwarded-For` hop behind one trusted proxy.
+/// The proxy must append the real peer address (or overwrite the header), and prevent direct access.
 pub fn client_ip(headers: &HeaderMap, peer: Option<SocketAddr>, trust_proxy: bool) -> String {
     if trust_proxy
-        && let Some(first) = headers
+        && let Some(address) = headers
             .get("x-forwarded-for")
             .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split(',').next())
+            .and_then(|v| v.rsplit(',').next())
             .map(str::trim)
-            .filter(|v| !v.is_empty())
+            .and_then(|v| v.parse::<std::net::IpAddr>().ok())
     {
-        return first.to_string();
+        return address.to_string();
     }
     peer.map(|p| p.ip().to_string()).unwrap_or_else(|| "unknown".into())
 }
@@ -230,7 +262,25 @@ mod tests {
         let mut h = HeaderMap::new();
         h.insert("x-forwarded-for", "203.0.113.5, 10.0.0.1".parse().unwrap());
         let peer: SocketAddr = "10.0.0.1:1234".parse().unwrap();
-        assert_eq!(client_ip(&h, Some(peer), true), "203.0.113.5");
+        assert_eq!(client_ip(&h, Some(peer), true), "10.0.0.1");
         assert_eq!(client_ip(&h, Some(peer), false), "10.0.0.1");
+        h.insert("x-forwarded-for", "spoofed, 203.0.113.5".parse().unwrap());
+        assert_eq!(client_ip(&h, Some(peer), true), "203.0.113.5");
+        h.insert("x-forwarded-for", "not an IP address".parse().unwrap());
+        assert_eq!(client_ip(&h, Some(peer), true), "10.0.0.1");
+    }
+
+    #[test]
+    fn limiter_storage_is_bounded_without_evicting_active_limits() {
+        let l = RateLimiter::default();
+        for i in 0..MAX_RATE_LIMIT_KEYS {
+            assert!(l.allow(&i.to_string(), 1, Duration::from_secs(3600)));
+            l.login_failed(&i.to_string());
+        }
+        assert!(!l.allow("overflow", 1, Duration::from_secs(1)));
+        assert!(!l.allow("0", 1, Duration::from_secs(3600)));
+        l.login_failed("overflow");
+        assert_eq!(l.windows.lock().unwrap().len(), MAX_RATE_LIMIT_KEYS);
+        assert_eq!(l.failures.lock().unwrap().len(), MAX_RATE_LIMIT_KEYS);
     }
 }

@@ -1,7 +1,8 @@
 [package]
 name = "wisprcheap"
-version = "1.5.2"
+version = "1.6.0"
 edition = "2024"
+rust-version = "1.92"
 license = "MIT"
 description = "Push-to-talk dictation: hold a hotkey, speak, and the cleaned-up text is pasted where you type."
 default-run = "wisprcheap"
@@ -38,9 +39,8 @@ serde_json = "1"
 serde_path_to_error = "0.1"
 serde_yaml = "0.9"
 tempfile = "3"
-tao = "0.37"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util", "signal"] }
-tray-icon = "0.25"
+tray-icon = { version = "0.26", default-features = false }
 uuid = { version = "1.26", features = ["v4", "v5"] }
 wisprcheap-sync = { path = "sync" }
 
@@ -50,6 +50,7 @@ axum = "0.8"
 wisprcheap-server = { path = "server" }
 
 [target.'cfg(windows)'.dependencies]
+winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
 tauri-winrt-notification = "0.8"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
@@ -66,10 +67,16 @@ windows-sys = { version = "0.61", features = [
 
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev = "0.13"
-gtk = "0.18"
-gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
+gtk = { package = "gtk4", version = "0.11" }
+gtk-layer-shell = { package = "gtk4-layer-shell", version = "0.8" }
+gdk4-x11 = { version = "0.11", features = ["v4_4"] }
+tray-icon = { version = "0.26", default-features = false, features = ["ksni"] }
+x11rb = "0.13"
 notify-rust = "4"
 rdev = "0.5"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
 
 [profile.release]
 lto = "thin"

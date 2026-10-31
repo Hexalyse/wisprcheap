@@ -6,7 +6,6 @@ permissions, microphone, provider keys, or running desktop are needed.
 """
 
 import argparse
-import json
 import os
 from pathlib import Path
 import pwd
@@ -15,6 +14,7 @@ import signal
 import subprocess
 import tempfile
 import time
+from native_test_binary import build_test_binary
 
 
 def main():
@@ -24,17 +24,7 @@ def main():
     repo = Path(__file__).resolve().parent.parent
     output = repo / "target" / "wayland-overlay"
     output.mkdir(parents=True, exist_ok=True)
-    cargo = shutil.which("cargo")
-    if not cargo:
-        raise RuntimeError("cargo not found")
-    command = [cargo, "test", "--locked", "-p", "wisprcheap", "--lib", "--no-run", "--message-format=json-render-diagnostics"]
-    if args.release:
-        command.append("--release")
-    build = subprocess.run(command, cwd=repo, stdout=subprocess.PIPE, text=True, check=True)
-    artifacts = [json.loads(line) for line in build.stdout.splitlines() if line.startswith("{")]
-    binary = next(item["executable"] for item in artifacts
-                  if item["reason"] == "compiler-artifact" and item.get("executable")
-                  and item["target"]["kind"] == ["lib"])
+    binary = build_test_binary(repo, args.release)
 
     # Sway refuses to run as root. This also lets WSL/root callers test safely.
     account = pwd.getpwnam("nobody") if os.getuid() == 0 else pwd.getpwuid(os.getuid())
@@ -51,7 +41,7 @@ def main():
         env.pop(name, None)
     # Xvfb supplies virtual keyboard/pointer devices to Sway. The GTK client still uses native Wayland.
     env.update(XDG_RUNTIME_DIR=str(runtime), WLR_BACKENDS="x11", WLR_RENDERER="pixman",
-               WLR_LIBINPUT_NO_DEVICES="1", GDK_BACKEND="wayland")
+               WLR_LIBINPUT_NO_DEVICES="1", GDK_BACKEND="wayland", GSK_RENDERER="cairo")
     prefix = ["runuser", "-u", account.pw_name, "--"] if os.getuid() == 0 else []
     compositor = None
     try:

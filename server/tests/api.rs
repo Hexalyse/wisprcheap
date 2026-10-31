@@ -215,6 +215,9 @@ async fn keyring_rules() {
     let mut bad = keyring.clone();
     bad["salt"] = json!("short");
     assert_eq!(t.api("PUT", "/v1/keyring", &token, Some(bad)).await.0, StatusCode::BAD_REQUEST);
+    let mut bad = keyring.clone();
+    bad["kdf"]["m"] = json!(1_048_576);
+    assert_eq!(t.api("PUT", "/v1/keyring", &token, Some(bad)).await.0, StatusCode::BAD_REQUEST);
     let (_, me) = t.api("GET", "/v1/me", &token, None).await;
     assert_eq!(me["keyring"]["keyVersion"], 2);
     assert_eq!(me["keyring"]["wrappedKey"], "e1.def");
