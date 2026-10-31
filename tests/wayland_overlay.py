@@ -17,6 +17,13 @@ import time
 from native_test_binary import build_test_binary
 
 
+def ignore_disappeared_runtime_file(_function, _path, error):
+    # Sway's descendants can unlink sockets/lock files after xvfb-run exits.
+    # Match Python 3.13's rmtree behavior while supporting older Python versions.
+    if not isinstance(error[1], FileNotFoundError):
+        raise error[1]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release", action="store_true")
@@ -81,7 +88,7 @@ def main():
             except subprocess.TimeoutExpired:
                 os.killpg(compositor.pid, signal.SIGKILL)
                 compositor.wait()
-        shutil.rmtree(runtime)
+        shutil.rmtree(runtime, onerror=ignore_disappeared_runtime_file)
 
 
 if __name__ == "__main__":
