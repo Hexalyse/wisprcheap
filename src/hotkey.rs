@@ -361,9 +361,11 @@ impl PushToTalk {
     }
 
     fn held(&self, combo: Option<&Combo>) -> bool {
+        // An empty combo (`hotkey.keys: []`) is a disabled shortcut, never held.
         combo.is_some_and(|c| {
-            c.iter()
-                .all(|group| group.iter().any(|code| self.pressed.contains(code)))
+            !c.is_empty()
+                && c.iter()
+                    .all(|group| group.iter().any(|code| self.pressed.contains(code)))
         })
     }
 
@@ -593,6 +595,26 @@ mod tests {
             Mode::Dictation => "dictation",
             Mode::Command => "command",
         }
+    }
+
+    #[test]
+    fn empty_dictation_keys_disable_the_dictation_shortcut() {
+        let mut h = Harness::new();
+        let mut opts = h.ptt.opts.clone();
+        opts.keys = Vec::new();
+        validate(&opts).unwrap();
+        h.ptt.configure(&opts).unwrap();
+        assert_eq!(h.ptt.label(), "");
+        // Pressing any other shortcut key alone doesn't start a dictation...
+        h.down(&[F13]);
+        h.sleep(400);
+        h.up(&[F13]);
+        assert!(h.events.is_empty(), "{:?}", h.events);
+        // ...while the command shortcut keeps working.
+        h.down(&[F13, F14, F16]);
+        h.sleep(400);
+        h.up(&[F16, F14, F13]);
+        assert_eq!(h.events, ["start:command", "stop:command"]);
     }
 
     #[test]

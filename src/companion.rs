@@ -48,7 +48,7 @@ fields![
         "hotkey.keys",
         "Dictation shortcut",
         Keys,
-        "Key names separated by +, for example Ctrl + Win"
+        "Key names separated by +, for example Ctrl + Win. Leave empty to dictate only through `wisprcheap record` (Omarchy's dictation keys)"
     ),
     (
         "General",

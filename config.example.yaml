@@ -6,7 +6,7 @@
 hotkey:
   # Hold to dictate. All keys must be held. Ctrl / Shift / Alt / Win match left or right;
   # use CtrlRight, AltLeft, F13... for a specific key. (Win is the Super/Meta key on Linux.)
-  keys: [Ctrl, Win]
+  keys: [Ctrl, Win]   # [] = no dictation shortcut, only `wisprcheap record` (e.g. Omarchy's dictation keys)
   # Hold to speak an instruction: it rewrites the selected text ("make this more formal", "translate to English"),
   # or writes new text at the cursor when nothing is selected. Pressing Alt during a dictation switches to it. [] disables.
   commandKeys: [Ctrl, Win, Alt]

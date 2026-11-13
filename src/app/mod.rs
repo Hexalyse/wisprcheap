@@ -59,6 +59,14 @@ pub enum AppMsg {
     SyncStatus,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecordAction {
+    Start,
+    Stop,
+    Toggle,
+    Cancel,
+}
+
 /// Instance acquired and config loaded: ready to run.
 pub struct Prepared {
     loaded: LoadedConfig,
@@ -743,6 +751,10 @@ impl Actor {
                     "sync-off"
                 }
             }
+            "record-start" => self.external_record(RecordAction::Start),
+            "record-stop" => self.external_record(RecordAction::Stop),
+            "record-toggle" => self.external_record(RecordAction::Toggle),
+            "record-cancel" => self.external_record(RecordAction::Cancel),
             other => match other
                 .strip_prefix("translate ")
                 .and_then(|n| n.trim().parse::<i32>().ok())
@@ -755,6 +767,56 @@ impl Actor {
             },
         };
         reply.to_string()
+    }
+
+    /// A dictation started or stopped from outside (`wisprcheap record ...`), for
+    /// desktops that bind their own dictation keys (Omarchy's `omarchy dictation`).
+    /// It behaves like the hotkey: same cues, overlay, transcription and paste.
+    fn external_record(&mut self, action: RecordAction) -> &'static str {
+        if !self.ready {
+            return "starting";
+        }
+        let pending_start = self.start_after_stop.is_some();
+        let recording = pending_start || (self.recorder.is_recording() && !self.stopping);
+        let start = match action {
+            RecordAction::Start => true,
+            RecordAction::Toggle => !recording,
+            RecordAction::Stop | RecordAction::Cancel => false,
+        };
+        // The app's own hotkey state machine must not finish this recording
+        // (a release of its keys) or think a hold is still in progress.
+        self.shared.hotkey.lock().unwrap().reset();
+        if start {
+            if self.shared.status.lock().unwrap().paused {
+                return "paused";
+            }
+            if recording {
+                return "recording";
+            }
+            self.start_recording(Mode::Dictation);
+            return if self.start_after_stop.is_some() || self.recorder.is_recording() {
+                "recording"
+            } else {
+                "error"
+            };
+        }
+        if pending_start {
+            // Started while the previous recording was finishing: never began.
+            self.start_after_stop = None;
+            return "stopped";
+        }
+        if !recording {
+            return "idle";
+        }
+        let mode = self.shared.status.lock().unwrap().recording_mode;
+        if action == RecordAction::Cancel {
+            self.stop_recording(false, mode);
+            self.shared.play(Cue::Cancel);
+            self.apply_pending_reload();
+        } else {
+            self.stop_recording(true, mode);
+        }
+        "stopped"
     }
 
     fn retry_failed(&mut self) {
@@ -849,14 +911,18 @@ impl Actor {
             let labels: Vec<&str> = p.pairs.iter().map(|x| x.label.as_str()).collect();
             format!("{} (currently: {current})", labels.join(", "))
         };
-        let mut shortcuts = vec![format!(
-            "hold {label} to dictate{}",
-            if config.hotkey.hands_free_double_tap {
-                " (double-tap: hands-free)"
-            } else {
-                ""
-            }
-        )];
+        let mut shortcuts = vec![if label.is_empty() {
+            "no dictation shortcut: use `wisprcheap record <start|stop|toggle>`".to_string()
+        } else {
+            format!(
+                "hold {label} to dictate{}",
+                if config.hotkey.hands_free_double_tap {
+                    " (double-tap: hands-free)"
+                } else {
+                    ""
+                }
+            )
+        }];
         if let Some(c) = command_label {
             shortcuts.push(format!(
                 "hold {c} for a command ({})",

@@ -693,11 +693,6 @@ fn validate(config: &mut Config) -> Vec<String> {
     };
     let h = &config.hotkey;
     check(
-        !h.keys.is_empty(),
-        "hotkey.keys",
-        "Too small: expected array to have >=1 items",
-    );
-    check(
         h.tap_max_ms > 0,
         "hotkey.tapMaxMs",
         "Too small: expected number to be >0",

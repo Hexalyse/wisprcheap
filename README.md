@@ -92,6 +92,7 @@ config, `.env`, history, log, and a `.cache/` folder). Otherwise:
 | --------------------- | -------------------------------------------------------------------- |
 | `wisprcheap start`    | Start in the background and return (the default command; `--config <file>` to pick a config) |
 | `wisprcheap stop`     | Quit the running instance                                            |
+| `wisprcheap record <start\|stop\|toggle\|cancel>` | Start or stop a dictation in the running instance, for desktops with their own dictation keys ([Omarchy](#omarchy)) |
 | `wisprcheap run`      | Run in the current terminal instead (Ctrl+C quits), still with the tray icon (`--no-tray` without) |
 | `wisprcheap ui`       | Open or focus the desktop companion; works while dictation is stopped |
 | `wisprcheap shortcut` | Create or update the desktop shortcut                                |
@@ -346,6 +347,23 @@ Good to know:
 - Keyboards plugged in while wisprcheap runs are picked up automatically.
 - `WISPRCHEAP_KEYBOARD=x11` forces the X11 method, and `WISPRCHEAP_KEYBOARD=evdev` forces the input devices
   (on X11 too).
+
+### Omarchy
+
+[Omarchy](https://omarchy.org/) binds its own dictation keys (**Alt + Space** toggles, holding **Right Alt** is
+push-to-talk) to a selectable backend. wisprcheap can be that backend: the keys then drive wisprcheap through
+`wisprcheap record`, with the same cues, overlay, transcription, polish and paste as its own hotkey.
+
+```sh
+install -Dm755 target/release/wisprcheap target/release/wisprcheap-ui -t ~/.local/bin
+install -Dm755 contrib/omarchy/omarchy-dictation-wisprcheap -t ~/.local/bin
+omarchy-dictation-use wisprcheap   # remembers the backend (stops the previous one)
+omarchy-restart-hyprctl            # binds Omarchy's dictation keys to it
+```
+
+The adapter starts wisprcheap on the first dictation if it isn't running. To use only Omarchy's keys, turn off
+wisprcheap's own dictation shortcut with `hotkey.keys: []` (and `commandKeys` / `addWordKeys` if you don't want
+those either). Pasting on Wayland still needs the [one-time setup](#wayland).
 
 ## License
 

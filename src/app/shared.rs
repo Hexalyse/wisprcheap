@@ -221,7 +221,12 @@ impl Shared {
             } else if st.paused {
                 (IconName::Paused, "Paused".to_string())
             } else {
-                (IconName::Idle, format!("Ready{translating} - hold {label}"))
+                let hint = if label.is_empty() {
+                    String::new()
+                } else {
+                    format!(" - hold {label}")
+                };
+                (IconName::Idle, format!("Ready{translating}{hint}"))
             };
             (icon, text, overlay)
         };
