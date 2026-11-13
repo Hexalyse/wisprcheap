@@ -6530,7 +6530,7 @@ dependencies = [
 
 [[package]]
 name = "wisprcheap"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -6613,7 +6613,7 @@ dependencies = [
 
 [[package]]
 name = "wisprcheap-ui"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "chrono",
  "iced",
