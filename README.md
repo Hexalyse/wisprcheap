@@ -373,19 +373,22 @@ Good to know:
 ### Omarchy
 
 [Omarchy](https://omarchy.org/) binds its own dictation keys (**Alt + Space** toggles, holding **Right Alt** is
-push-to-talk) to a selectable backend. wisprcheap can be that backend: the keys then drive wisprcheap through
-`wisprcheap record`, with the same cues, overlay, transcription, polish and paste as its own hotkey.
+push-to-talk) to a backend chosen in its menu. wisprcheap can be that backend, next to Voxtype and Superwhisper: the
+keys then drive wisprcheap through `wisprcheap record`, with the same cues, overlay, transcription, polish and paste as
+its own hotkey.
 
 ```sh
 install -Dm755 target/release/wisprcheap target/release/wisprcheap-ui -t ~/.local/bin
-install -Dm755 contrib/omarchy/omarchy-dictation-wisprcheap -t ~/.local/bin
-omarchy-dictation-use wisprcheap   # remembers the backend (stops the previous one)
-omarchy-restart-hyprctl            # binds Omarchy's dictation keys to it
+contrib/omarchy/install.sh
 ```
 
-The adapter starts wisprcheap on the first dictation if it isn't running. To use only Omarchy's keys, turn off
-wisprcheap's own dictation shortcut with `hotkey.keys: []` (and `commandKeys` / `addWordKeys` if you don't want
-those either). Pasting on Wayland still needs the [one-time setup](#wayland).
+`install.sh` puts the Omarchy adapter and its installer and remover in `~/.local/bin`, and adds **WisprCheap** to
+Omarchy's menu: **Setup > Defaults > Dictation** (and **Remove > Dictation**). Picking it there sets up the keyboard
+access if needed (the [one-time setup](#wayland), with sudo), starts wisprcheap at login, and makes it the backend.
+The adapter also starts wisprcheap on the first dictation if it isn't running.
+
+To use only Omarchy's keys, turn off wisprcheap's own dictation shortcut with `hotkey.keys: []` (and `commandKeys` /
+`addWordKeys` if you don't want those either).
 
 ## License
 
