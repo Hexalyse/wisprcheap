@@ -310,18 +310,18 @@ fn glow_stop(offset: f32, color: Color, alpha: f32) -> gsk::ColorStop {
     )
 }
 
-/// Height of a wave layer above its base line at `x`: small waves of three lengths, travelling along
-/// the edge (`phase` sets a layer apart, `direction` the way it travels).
-fn wave(x: f32, t: f32, amplitude: f32, phase: f32, direction: f32) -> f32 {
+/// Height of a wave layer above its base line at `x`: small waves of three lengths, all travelling to the
+/// right as `t` advances (`phase` and `speed` set a layer apart).
+fn wave(x: f32, t: f32, amplitude: f32, phase: f32, speed: f32) -> f32 {
     amplitude
-        * (0.5 * (x / 42.0 - direction * 2.2 * t + phase).sin()
-            + 0.3 * (x / 23.0 + direction * 1.6 * t + 2.0 * phase).sin()
-            + 0.2 * (x / 85.0 - direction * 0.8 * t + 3.0 * phase).sin())
+        * (0.5 * (x / 42.0 - speed * 2.2 * t + phase).sin()
+            + 0.3 * (x / 23.0 - speed * 1.6 * t + 2.0 * phase).sin()
+            + 0.2 * (x / 85.0 - speed * 0.8 * t + 3.0 * phase).sin())
 }
 
-/// One frame of the glow over a `w` x `h` window, in its bottom few dozen pixels: a soft halo, two layers
-/// of small waves travelling along the bottom edge, a bright line on the edge, and thin glows climbing the
-/// side edges. Every part is blurred on the GPU, each in its own small region.
+/// One frame of the glow over a `w` x `h` window: a soft halo, two layers of small waves travelling along the
+/// bottom edge, side glows that continue them up both edges (as thick as the waves at each corner, tapering
+/// as they climb), and a bright line on the edges. Each part is blurred on the GPU, in its own small region.
 fn draw_glow(s: &gtk::Snapshot, w: f32, h: f32, f: &GlowFrame) {
     if w <= 0.0 || h <= 0.0 || f.opacity <= 0.0 {
         return;
@@ -332,9 +332,13 @@ fn draw_glow(s: &gtk::Snapshot, w: f32, h: f32, f: &GlowFrame) {
     let (t, swell) = (f.time, f.swell);
     s.push_opacity(f.opacity as f64);
 
-    // Height of the glow above the bottom edge, and of its waves: low, a little higher with the voice.
-    let base = 9.0 + 9.0 * swell;
-    let amplitude = 3.5 + 3.5 * swell;
+    // Height of the glow above the bottom edge, and of its waves: low, higher with the voice.
+    let base = 9.0 + 10.0 * swell;
+    let amplitude = 3.5 + 4.5 * swell;
+    // (color, phase, height share, opacity, speed): the back layer is lower and slower
+    const LAYERS: [(usize, f32, f32, f32, f32); 2] =
+        [(0, 0.0, 1.0, 0.7, 1.0), (2, 2.4, 0.65, 0.55, 0.8)];
+    let height_at = |x: f32| base + wave(x, t, amplitude, LAYERS[0].1, LAYERS[0].4);
 
     // Halo
     let halo = base * 2.4 + amplitude;
@@ -347,16 +351,15 @@ fn draw_glow(s: &gtk::Snapshot, w: f32, h: f32, f: &GlowFrame) {
     );
     s.pop();
 
-    // Waves: (color, phase, height share, opacity, direction)
-    for (color, phase, lift, alpha, direction) in
-        [(c1, 0.0, 1.0, 0.7, 1.0), (c3, 2.4, 0.65, 0.55, -1.0)]
-    {
+    // Waves
+    for (color, phase, lift, alpha, speed) in LAYERS {
+        let color = f.colors[color];
         let line = h - base * lift;
         let path = gsk::PathBuilder::new();
         path.move_to(-10.0, h + 10.0);
         let mut x = -10.0;
         while x <= w + 10.0 {
-            path.line_to(x, line - wave(x, t, amplitude, phase, direction));
+            path.line_to(x, line - wave(x, t, amplitude, phase, speed));
             x += 6.0;
         }
         path.line_to(w + 10.0, h + 10.0);
@@ -378,30 +381,62 @@ fn draw_glow(s: &gtk::Snapshot, w: f32, h: f32, f: &GlowFrame) {
         s.pop();
     }
 
-    // Side edges: thin, fading as they climb
-    let reach = h * (0.14 + 0.08 * swell) * (1.0 + 0.05 * (t * 0.9).sin());
-    for x in [0.0, w - 3.0] {
+    // Sides: the glow continues up both edges, starting as thick as the wave at that corner and tapering
+    // smoothly as it climbs. A ripple flows along them with the waves (down the left edge, up the right).
+    let reach = (h * (0.3 + 0.08 * swell)).min(h);
+    for (edge, inward, flow) in [(0.0f32, 1.0f32, 1.0f32), (w, -1.0, -1.0)] {
+        let thickness = height_at(edge).max(base * 0.6) + 2.0;
+        let path = gsk::PathBuilder::new();
+        path.move_to(edge - inward * 10.0, h + 10.0);
+        path.line_to(edge - inward * 10.0, h - reach);
+        let steps = 48;
+        for i in 0..=steps {
+            // from the top (p = 1) down to the corner (p = 0)
+            let p = 1.0 - i as f32 / steps as f32;
+            // full thickness at the corner, easing out at both ends (1 - smoothstep)
+            let taper = 1.0 - p * p * (3.0 - 2.0 * p);
+            let ripple = 1.0 + 0.15 * (p * 9.0 + flow * 2.2 * t).sin();
+            let y = h - p * reach;
+            path.line_to(edge + inward * thickness * taper * ripple, y);
+        }
+        path.line_to(edge + inward * thickness, h + 10.0);
+        path.close();
         s.push_blur(4.0);
-        s.append_linear_gradient(
-            &rect(x, h - reach, 3.0, reach),
-            &point(0.0, h),
-            &point(0.0, h - reach),
+        s.push_fill(&path.to_path(), gsk::FillRule::Winding);
+        s.append_radial_gradient(
+            &rect(edge - thickness * 2.0, h - reach, thickness * 4.0, reach),
+            &point(edge, h),
+            thickness * 2.4,
+            reach,
+            0.0,
+            1.0,
             &[
-                glow_stop(0.0, c1, 0.9),
-                glow_stop(0.45, c1, 0.35),
+                glow_stop(0.0, c1, 0.75),
+                glow_stop(0.5, c1, 0.35),
                 glow_stop(1.0, c1, 0.0),
             ],
         );
         s.pop();
+        s.pop();
+        // bright edge line, fading as it climbs
+        let x = if inward > 0.0 { 0.0 } else { w - 1.5 };
+        s.push_blur(1.0);
+        s.append_linear_gradient(
+            &rect(x, h - reach * 0.85, 1.5, reach * 0.85),
+            &point(0.0, h),
+            &point(0.0, h - reach * 0.85),
+            &[glow_stop(0.0, c3, 0.8), glow_stop(1.0, c3, 0.0)],
+        );
+        s.pop();
     }
 
-    // Bright edge line, with a shimmer running along it
+    // Bright bottom edge line, with a shimmer running along it to the right
     let period = (w / 2.0).max(1.0);
     let offset = (t * 90.0) % period;
     s.append_repeating_linear_gradient(
         &rect(0.0, h - 1.5, w, 1.5),
-        &point(-offset, 0.0),
-        &point(period - offset, 0.0),
+        &point(offset - period, 0.0),
+        &point(offset, 0.0),
         &[
             glow_stop(0.0, c3, 0.75),
             glow_stop(0.5, c1, 0.95),
@@ -713,10 +748,10 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let (w, h) = (1000.0f32, 640.0f32);
         let frames = [
-            ("quiet-a", 0.0, 0.0),
-            ("quiet-b", 0.0, 0.5),
-            ("speaking-a", 0.8, 1.0),
-            ("speaking-b", 0.8, 1.5),
+            ("quiet", 0.0, 0.0),
+            ("quiet-later", 0.0, 0.2),
+            ("speaking", 0.8, 1.0),
+            ("speaking-later", 0.8, 1.4),
         ];
         for (name, swell, time) in frames {
             let snapshot = gtk::Snapshot::new();

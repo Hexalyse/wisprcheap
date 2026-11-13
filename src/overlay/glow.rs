@@ -17,7 +17,10 @@ use crate::hotkey::Mode;
 const SHOW_SECS: f32 = 0.25;
 const HIDE_SECS: f32 = 0.45;
 /// The voice is measured over windows this long (like the pill's waveform bars).
-const READING_EVERY: Duration = Duration::from_millis(80);
+const READING_EVERY: Duration = Duration::from_millis(50);
+/// How fast the waves travel to the right in silence, and how much faster at full voice.
+const DRIFT: f32 = 0.35;
+const VOICE_SPEEDUP: f32 = 2.6;
 /// Breathing period while processing.
 const BREATHE_SECS: f32 = 1.6;
 
@@ -46,11 +49,12 @@ impl GlowLook {
         }
     }
 
-    /// How fast the blobs drift (relative).
+    /// How fast the waves travel, before the voice speeds them up.
     fn speed(self) -> f32 {
         match self {
-            GlowLook::Processing => 1.8,
-            _ => 1.0,
+            GlowLook::Processing => 1.0,
+            GlowLook::Feedback(_) => 0.5,
+            _ => DRIFT,
         }
     }
 }
@@ -61,7 +65,7 @@ pub struct GlowFrame {
     /// Overall opacity, 0..1.
     pub opacity: f32,
     pub colors: [Color; 3],
-    /// Motion clock, in seconds (runs faster while processing).
+    /// How far the waves have travelled: slow in silence, faster with the voice (and while processing).
     pub time: f32,
     /// How far the glow reaches, 0..1 (the voice while recording).
     pub swell: f32,
@@ -203,8 +207,8 @@ impl GlowScene {
             self.next_reading = None;
         }
         let heard = self.heard;
-        // Rise quickly with the voice, settle slowly between words.
-        let tau = if heard > self.voice { 0.05 } else { 0.3 };
+        // Rise right away with the voice, and settle quickly enough to show the pauses between words.
+        let tau = if heard > self.voice { 0.04 } else { 0.15 };
         self.voice = approach(self.voice, heard, dt, tau);
         let swell = match self.look {
             GlowLook::Dictation | GlowLook::Command => self.voice,
@@ -212,14 +216,18 @@ impl GlowScene {
             GlowLook::Feedback(_) => 0.6,
             GlowLook::Hidden => self.swell,
         };
-        self.swell = approach(self.swell, swell, dt, 0.08);
+        self.swell = approach(self.swell, swell, dt, 0.06);
         let palette = self.look.palette();
         for (color, target) in self.colors.iter_mut().zip(palette) {
             color.r = approach(color.r, target.r, dt, 0.12);
             color.g = approach(color.g, target.g, dt, 0.12);
             color.b = approach(color.b, target.b, dt, 0.12);
         }
-        self.time += dt * self.look.speed();
+        let speedup = match self.look {
+            GlowLook::Dictation | GlowLook::Command => VOICE_SPEEDUP * self.voice,
+            _ => 0.0,
+        };
+        self.time += dt * (self.look.speed() + speedup);
         self.breath = (self.breath + dt / BREATHE_SECS).fract();
     }
 
@@ -318,11 +326,11 @@ mod tests {
         run(&mut scene, &mut now, 300, 0.3); // about -10 dBFS: loud
         let loud = scene.frame();
         assert!(loud.swell > 0.85 && loud.opacity > 0.95, "{loud:?}");
-        // settles back between words, more slowly than it rose
-        run(&mut scene, &mut now, 100, 0.0);
+        // settles back in a pause between words, a little more slowly than it rose
+        run(&mut scene, &mut now, 50, 0.0);
         assert!(scene.frame().swell > 0.5);
-        run(&mut scene, &mut now, 2000, 0.0);
-        assert!(scene.frame().swell < 0.01);
+        run(&mut scene, &mut now, 500, 0.0);
+        assert!(scene.frame().swell < 0.1, "{:?}", scene.frame());
     }
 
     #[test]
@@ -340,20 +348,29 @@ mod tests {
     }
 
     #[test]
-    fn the_glow_keeps_moving() {
+    fn waves_drift_in_silence_and_speed_up_with_the_voice() {
         let mut now = Instant::now();
         let mut scene = GlowScene::new();
         scene.set_status(status(Some(Mode::Dictation), false));
-        run(&mut scene, &mut now, 200, 0.0);
-        let before = scene.frame().time;
-        run(&mut scene, &mut now, 500, 0.0);
-        let recording = scene.frame().time - before;
-        assert!((recording - 0.5).abs() < 0.05, "{recording}");
-        // faster while processing
+        run(&mut scene, &mut now, 300, 0.0);
+        let travelled = |scene: &mut GlowScene, now: &mut Instant, level: f32| {
+            let before = scene.frame().time;
+            run(scene, now, 500, level);
+            scene.frame().time - before
+        };
+        let silent = travelled(&mut scene, &mut now, 0.0);
+        assert!((silent - 0.5 * DRIFT).abs() < 0.02, "{silent}");
+        let speaking = travelled(&mut scene, &mut now, 0.4);
+        assert!(speaking > 4.0 * silent, "{speaking} vs {silent}");
+        // a pause: slows down again within a few hundred ms
+        run(&mut scene, &mut now, 400, 0.0);
+        let paused = travelled(&mut scene, &mut now, 0.0);
+        assert!(paused < 1.5 * silent, "{paused} vs {silent}");
+        // processing: a steady, livelier drift
         scene.set_status(status(None, true));
-        let before = scene.frame().time;
-        run(&mut scene, &mut now, 500, 0.0);
-        assert!(scene.frame().time - before > 0.85);
+        run(&mut scene, &mut now, 100, 0.0);
+        let processing = travelled(&mut scene, &mut now, 0.0);
+        assert!((processing - 0.5).abs() < 0.05, "{processing}");
     }
 
     #[test]
