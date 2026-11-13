@@ -80,6 +80,13 @@ fields![
     ),
     (
         "General",
+        "hotkey.escapeCancels",
+        "Escape cancels the recording",
+        Bool,
+        "However it was started: hands-free, or Omarchy's dictation keys"
+    ),
+    (
+        "General",
         "hotkey.tapMaxMs",
         "Maximum tap duration (ms)",
         Number,

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use crate::config::{ConfigArgs, LoadedConfig, ensure_config_file, load_config};
-use crate::hotkey::{CancelReason, HotkeyEvent, Mode, PushToTalk, State};
+use crate::hotkey::{CancelReason, HotkeyEvent, Mode, PushToTalk, State, keys};
 use crate::instance::{AcquireError, Instance, Request, acquire_instance};
 use crate::keyboard::{Hook, KeyEvent};
 use crate::overlay::Feedback;
@@ -276,6 +276,9 @@ impl Actor {
                 }
                 for event in out.events {
                     self.on_hotkey(event);
+                }
+                if ev.down && ev.code == keys::ESCAPE {
+                    self.escape_pressed();
                 }
             }
             AppMsg::TapTimeout(generation) => {
@@ -767,6 +770,16 @@ impl Actor {
             },
         };
         reply.to_string()
+    }
+
+    /// Escape cancels a recording in progress (unless the hotkey already did: it cancels on any other key
+    /// while held). The key still reaches the focused app: it's observed, never consumed.
+    fn escape_pressed(&mut self) {
+        let recording = self.recorder.is_recording() && !self.stopping;
+        if recording && self.shared.pipeline().config.hotkey.escape_cancels {
+            info!("Cancelled (Escape).");
+            self.external_record(RecordAction::Cancel);
+        }
     }
 
     /// A dictation started or stopped from outside (`wisprcheap record ...`), for

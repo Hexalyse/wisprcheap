@@ -18,6 +18,8 @@ hotkey:
   doubleTapWindowMs: 350
   # Pressing any other key while holding cancels the recording, so Ctrl+Win+Left/Right/D still work normally.
   cancelOnOtherKey: true
+  # Escape cancels a recording in progress, however it was started (hands-free, Omarchy's dictation keys...).
+  escapeCancels: true
 
 recording:
   device: default          # "default" follows the system default mic; or an index / part of a name (see `wisprcheap devices`)

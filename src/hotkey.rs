@@ -28,6 +28,7 @@ pub mod keys {
     pub const META: KeyCode = 0x0E5B;
     pub const META_RIGHT: KeyCode = 0x0E5C;
     /// Keys without a name get codes above this (they never match a combo).
+    pub const ESCAPE: KeyCode = 0x0001;
     pub const UNKNOWN_BASE: KeyCode = 0x10000;
 }
 
@@ -528,6 +529,7 @@ mod tests {
                 tap_max_ms: 250,
                 double_tap_window_ms: 150,
                 cancel_on_other_key: true,
+                escape_cancels: true,
             };
             Self {
                 ptt: PushToTalk::new(&opts).unwrap(),
@@ -739,6 +741,7 @@ mod tests {
                 tap_max_ms: 250,
                 double_tap_window_ms: 150,
                 cancel_on_other_key: true,
+                escape_cancels: true,
             })
             .unwrap();
         h.down(&[F13, F14]);

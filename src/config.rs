@@ -49,6 +49,8 @@ pub struct HotkeyConfig {
     pub double_tap_window_ms: u64,
     /// Cancel the recording if another key is pressed while holding (e.g. Ctrl+Win+Left).
     pub cancel_on_other_key: bool,
+    /// Escape cancels a recording in progress, however it was started (hands-free, `wisprcheap record`...).
+    pub escape_cancels: bool,
 }
 
 impl Default for HotkeyConfig {
@@ -61,6 +63,7 @@ impl Default for HotkeyConfig {
             tap_max_ms: 250,
             double_tap_window_ms: 350,
             cancel_on_other_key: true,
+            escape_cancels: true,
         }
     }
 }
