@@ -317,6 +317,9 @@ pub struct OutputConfig {
     pub restore_clipboard: bool,
     /// Append a space so consecutive dictations don't run together.
     pub trailing_space: bool,
+    /// Linux: more window classes to treat as terminals, which paste with Ctrl+Shift+V and copy with
+    /// Ctrl+Shift+C (common terminals, and windows Omarchy tags `terminal`, are already known).
+    pub terminal_apps: Vec<String>,
 }
 
 impl Default for OutputConfig {
@@ -325,6 +328,7 @@ impl Default for OutputConfig {
             paste: true,
             restore_clipboard: false,
             trailing_space: true,
+            terminal_apps: Vec::new(),
         }
     }
 }

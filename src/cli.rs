@@ -340,6 +340,8 @@ pub fn open_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
+// gtk::MessageDialog is deprecated since GTK 4.10 (for AlertDialog), but works on every GTK 4.
+#[allow(deprecated)]
 fn message_box(message: &str, is_error: bool) {
     #[cfg(windows)]
     {

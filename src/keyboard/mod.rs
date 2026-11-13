@@ -30,6 +30,8 @@ mod linux_input;
 mod x11;
 #[cfg(target_os = "linux")]
 use linux as imp;
+#[cfg(target_os = "linux")]
+pub use linux::is_wayland;
 
 pub struct Hook(imp::Hook);
 
@@ -50,9 +52,15 @@ impl Hook {
     }
 }
 
-/// Press and release Ctrl+`letter` in the focused application.
-pub fn tap_ctrl(letter: Letter) {
-    imp::tap_ctrl(letter);
+/// Press and release Ctrl+`letter` in the focused application, or Ctrl+Shift+`letter` (terminals).
+pub fn tap_ctrl(letter: Letter, shift: bool) {
+    #[cfg(target_os = "linux")]
+    imp::tap_ctrl(letter, shift);
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = shift; // Windows terminals paste with Ctrl+V
+        imp::tap_ctrl(letter);
+    }
 }
 
 /// `wisprcheap wayland`: the keyboard access status and the one-time setup. Returns (report, all good).

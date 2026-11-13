@@ -32,7 +32,7 @@ pub enum GlowLook {
 
 impl GlowLook {
     /// Three tints the blobs, rim and edges are drawn with.
-    fn palette(self) -> [Color; 3] {
+    pub(super) fn palette(self) -> [Color; 3] {
         let hex = |a, b, c| [Color::hex(a), Color::hex(b), Color::hex(c)];
         match self {
             // periwinkle blues

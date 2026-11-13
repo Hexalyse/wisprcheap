@@ -60,7 +60,7 @@ impl LogWindow {
         view.set_right_margin(6);
         view.add_css_class("wisprcheap-log");
         let provider = gtk::CssProvider::new();
-        provider.load_from_data(CSS);
+        provider.load_from_string(CSS);
         gtk::style_context_add_provider_for_display(
             &gtk::prelude::WidgetExt::display(&window),
             &provider,
@@ -71,7 +71,7 @@ impl LogWindow {
 
         let on_hidden = self.on_hidden.clone();
         window.connect_close_request(move |w| {
-            w.hide();
+            w.set_visible(false);
             on_hidden();
             glib::Propagation::Stop
         });
@@ -82,7 +82,7 @@ impl LogWindow {
         keys.connect_key_pressed(move |_, key, _, _| {
             if key == gdk::Key::Escape {
                 if let Some(window) = weak_window.upgrade() {
-                    window.hide();
+                    window.set_visible(false);
                 }
                 on_hidden();
                 glib::Propagation::Stop

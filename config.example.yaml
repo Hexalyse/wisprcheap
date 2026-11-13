@@ -101,6 +101,9 @@ output:
   paste: true              # simulate Ctrl+V into the focused app (the text is always copied to the clipboard)
   restoreClipboard: false  # true = put the previous clipboard content back after pasting
   trailingSpace: true      # so consecutive dictations don't run together
+  # Linux: terminals paste with Ctrl+Shift+V (and copy with Ctrl+Shift+C). Common terminals and the windows
+  # Omarchy tags "terminal" are detected on Hyprland and X11; add other window classes here.
+  terminalApps: []
 
 sounds:
   enabled: true

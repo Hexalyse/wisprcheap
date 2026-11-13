@@ -2,10 +2,10 @@
 //! Wayland uses Layer Shell; X11 positioning/stacking uses a small native adapter.
 
 use super::glow::{GlowFrame, GlowScene};
-use super::hyprland;
 use super::paint::{Canvas, Color};
 use super::scene::{CANVAS_H, CANVAS_W, Scene};
 use super::{Feedback, OverlayStatus, OverlayStyle, x11};
+use crate::hyprland;
 use gtk::prelude::*;
 use gtk::{cairo, gdk, glib, graphene, gsk};
 use gtk_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
@@ -154,7 +154,9 @@ fn create() -> Result<Rc<RefCell<Inner>>, String> {
         .build();
     window.add_css_class("wisprcheap-overlay");
     let css = gtk::CssProvider::new();
-    css.load_from_data("window.wisprcheap-overlay { background: transparent; box-shadow: none; }");
+    css.load_from_string(
+        "window.wisprcheap-overlay { background: transparent; box-shadow: none; }",
+    );
     gtk::style_context_add_provider_for_display(
         &display,
         &css,
@@ -219,7 +221,7 @@ fn wake(inner: &Rc<RefCell<Inner>>) {
         state.active = true;
         state.window.clone()
     };
-    window.show();
+    window.set_visible(true);
     let weak = Rc::downgrade(inner);
     glib::timeout_add_local(FRAME, move || {
         let Some(inner) = weak.upgrade() else {
@@ -237,7 +239,7 @@ fn wake(inner: &Rc<RefCell<Inner>>) {
         state.active = false;
         let window = state.window.clone();
         drop(state);
-        window.hide();
+        window.set_visible(false);
         glib::ControlFlow::Break
     });
 }
@@ -286,7 +288,7 @@ mod glow_area {
 glib::wrapper! {
     pub struct GlowArea(ObjectSubclass<glow_area::Imp>)
         @extends gtk::Widget,
-        @implements gtk::Buildable, gtk::ConstraintTarget;
+        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
 }
 
 impl GlowArea {
@@ -308,8 +310,18 @@ fn glow_stop(offset: f32, color: Color, alpha: f32) -> gsk::ColorStop {
     )
 }
 
-/// One frame of the glow over a `w` x `h` window: a soft band along the bottom whose top is shaped by drifting
-/// blobs of light, thin glows climbing both side edges and fading with height, and a bright shimmering rim.
+/// Height of a wave layer above its base line at `x`: small waves of three lengths, travelling along
+/// the edge (`phase` sets a layer apart, `direction` the way it travels).
+fn wave(x: f32, t: f32, amplitude: f32, phase: f32, direction: f32) -> f32 {
+    amplitude
+        * (0.5 * (x / 42.0 - direction * 2.2 * t + phase).sin()
+            + 0.3 * (x / 23.0 + direction * 1.6 * t + 2.0 * phase).sin()
+            + 0.2 * (x / 85.0 - direction * 0.8 * t + 3.0 * phase).sin())
+}
+
+/// One frame of the glow over a `w` x `h` window, in its bottom few dozen pixels: a soft halo, two layers
+/// of small waves travelling along the bottom edge, a bright line on the edge, and thin glows climbing the
+/// side edges. Every part is blurred on the GPU, each in its own small region.
 fn draw_glow(s: &gtk::Snapshot, w: f32, h: f32, f: &GlowFrame) {
     if w <= 0.0 || h <= 0.0 || f.opacity <= 0.0 {
         return;
@@ -320,83 +332,80 @@ fn draw_glow(s: &gtk::Snapshot, w: f32, h: f32, f: &GlowFrame) {
     let (t, swell) = (f.time, f.swell);
     s.push_opacity(f.opacity as f64);
 
-    // How high the glow reaches from the bottom edge: discreet, a little higher with the voice.
-    let band = (h * 0.06).clamp(24.0, 60.0) * (0.8 + 0.7 * swell);
-    let base = band * 1.15;
-    s.append_linear_gradient(
-        &rect(0.0, h - base, w, base),
-        &point(0.0, h),
-        &point(0.0, h - base),
-        &[
-            glow_stop(0.0, c2, 0.42),
-            glow_stop(0.3, c2, 0.18),
-            glow_stop(1.0, c2, 0.0),
-        ],
-    );
+    // Height of the glow above the bottom edge, and of its waves: low, a little higher with the voice.
+    let base = 9.0 + 9.0 * swell;
+    let amplitude = 3.5 + 3.5 * swell;
 
-    // (speed, phase, half width as a share of the window width)
-    const BLOBS: [(f32, f32, f32); 4] = [
-        (0.31, 0.0, 0.28),
-        (0.23, 2.1, 0.22),
-        (0.37, 4.2, 0.25),
-        (0.27, 1.3, 0.2),
-    ];
-    for (i, (speed, phase, width)) in BLOBS.into_iter().enumerate() {
-        let k = i as f32;
-        let cx = w * (0.5 + 0.48 * (t * speed + phase).sin());
-        let hr = w * (width + 0.05 * (t * 0.7 + k).sin());
-        let vr = band * (1.0 + 0.25 * (t * 1.3 + 1.7 * k).sin());
-        let color = f.colors[i % 3];
-        s.append_radial_gradient(
-            &rect(cx - hr, h - vr, 2.0 * hr, vr),
-            &point(cx, h),
-            hr,
-            vr,
-            0.0,
-            1.0,
+    // Halo
+    let halo = base * 2.4 + amplitude;
+    s.push_blur(16.0);
+    s.append_linear_gradient(
+        &rect(-20.0, h - halo, w + 40.0, halo + 20.0),
+        &point(0.0, h),
+        &point(0.0, h - halo),
+        &[glow_stop(0.0, c2, 0.5), glow_stop(1.0, c2, 0.0)],
+    );
+    s.pop();
+
+    // Waves: (color, phase, height share, opacity, direction)
+    for (color, phase, lift, alpha, direction) in
+        [(c1, 0.0, 1.0, 0.7, 1.0), (c3, 2.4, 0.65, 0.55, -1.0)]
+    {
+        let line = h - base * lift;
+        let path = gsk::PathBuilder::new();
+        path.move_to(-10.0, h + 10.0);
+        let mut x = -10.0;
+        while x <= w + 10.0 {
+            path.line_to(x, line - wave(x, t, amplitude, phase, direction));
+            x += 6.0;
+        }
+        path.line_to(w + 10.0, h + 10.0);
+        path.close();
+        let top = line - amplitude;
+        s.push_blur(2.5);
+        s.push_fill(&path.to_path(), gsk::FillRule::Winding);
+        s.append_linear_gradient(
+            &rect(-10.0, top - 2.0, w + 20.0, h - top + 12.0),
+            &point(0.0, h),
+            &point(0.0, top),
             &[
-                glow_stop(0.0, color, 0.45),
-                glow_stop(0.45, color, 0.18),
-                glow_stop(1.0, color, 0.0),
+                glow_stop(0.0, color, alpha),
+                glow_stop(0.6, color, alpha * 0.55),
+                glow_stop(1.0, color, alpha * 0.2),
             ],
         );
+        s.pop();
+        s.pop();
     }
 
-    let reach = h * (0.18 + 0.1 * swell) * (1.0 + 0.06 * (t * 0.9).sin());
-    let spread = 8.0 + 10.0 * swell;
-    for (edge, left) in [(0.0, 0.0), (w, w - spread)] {
-        s.append_radial_gradient(
-            &rect(left, h - reach, spread, reach),
-            &point(edge, h),
-            spread,
-            reach,
-            0.0,
-            1.0,
+    // Side edges: thin, fading as they climb
+    let reach = h * (0.14 + 0.08 * swell) * (1.0 + 0.05 * (t * 0.9).sin());
+    for x in [0.0, w - 3.0] {
+        s.push_blur(4.0);
+        s.append_linear_gradient(
+            &rect(x, h - reach, 3.0, reach),
+            &point(0.0, h),
+            &point(0.0, h - reach),
             &[
-                glow_stop(0.0, c1, 0.5),
-                glow_stop(0.4, c1, 0.2),
+                glow_stop(0.0, c1, 0.9),
+                glow_stop(0.45, c1, 0.35),
                 glow_stop(1.0, c1, 0.0),
             ],
         );
-        let line = if edge == 0.0 { 0.0 } else { w - 2.0 };
-        s.append_linear_gradient(
-            &rect(line, h - reach, 2.0, reach),
-            &point(0.0, h),
-            &point(0.0, h - reach),
-            &[glow_stop(0.0, c3, 0.75), glow_stop(1.0, c3, 0.0)],
-        );
+        s.pop();
     }
 
+    // Bright edge line, with a shimmer running along it
     let period = (w / 2.0).max(1.0);
     let offset = (t * 90.0) % period;
     s.append_repeating_linear_gradient(
-        &rect(0.0, h - 2.0, w, 2.0),
+        &rect(0.0, h - 1.5, w, 1.5),
         &point(-offset, 0.0),
         &point(period - offset, 0.0),
         &[
-            glow_stop(0.0, c1, 0.85),
-            glow_stop(0.5, c3, 1.0),
-            glow_stop(1.0, c1, 0.85),
+            glow_stop(0.0, c3, 0.75),
+            glow_stop(0.5, c1, 0.95),
+            glow_stop(1.0, c3, 0.75),
         ],
     );
     s.pop();
@@ -453,7 +462,7 @@ impl Glow {
         // A mapped GTK window keeps its size: remap it to apply a new one.
         let mapped = self.window.is_mapped();
         if mapped {
-            self.window.hide();
+            self.window.set_visible(false);
         }
         match &placement {
             Placement::Window(active) => {
@@ -477,7 +486,7 @@ impl Glow {
         }
         self.placement = Some(placement);
         if mapped {
-            self.window.show();
+            self.window.set_visible(true);
         }
     }
 
@@ -504,7 +513,7 @@ fn create_glow() -> Result<Rc<RefCell<Glow>>, String> {
         .build();
     window.add_css_class("wisprcheap-glow");
     let css = gtk::CssProvider::new();
-    css.load_from_data("window.wisprcheap-glow { background: transparent; box-shadow: none; }");
+    css.load_from_string("window.wisprcheap-glow { background: transparent; box-shadow: none; }");
     gtk::style_context_add_provider_for_display(
         &display,
         &css,
@@ -557,7 +566,7 @@ fn wake_glow(glow: &Rc<RefCell<Glow>>) {
         state.frames = 0;
         state.window.clone()
     };
-    window.show();
+    window.set_visible(true);
     let weak = Rc::downgrade(glow);
     glib::timeout_add_local(FRAME, move || {
         let Some(glow) = weak.upgrade() else {
@@ -579,7 +588,7 @@ fn wake_glow(glow: &Rc<RefCell<Glow>>) {
         state.active = false;
         let window = state.window.clone();
         drop(state);
-        window.hide();
+        window.set_visible(false);
         glib::ControlFlow::Break
     });
 }
@@ -690,6 +699,60 @@ mod tests {
     use crate::overlay::Recording;
     use std::cell::Cell;
     use std::process::Command;
+
+    /// Render glow frames offscreen (the real drawing code, through GSK's Cairo fallback) to PNG files in
+    /// WISPRCHEAP_GLOW_PNG_DIR, to look at the glow without recording: quiet, then speaking, a moment apart.
+    #[test]
+    #[ignore = "needs a display; writes PNGs to WISPRCHEAP_GLOW_PNG_DIR"]
+    fn render_glow_frames() {
+        use super::super::glow::GlowLook;
+        gtk::init().unwrap();
+        let dir = std::path::PathBuf::from(
+            std::env::var_os("WISPRCHEAP_GLOW_PNG_DIR").expect("set WISPRCHEAP_GLOW_PNG_DIR"),
+        );
+        std::fs::create_dir_all(&dir).unwrap();
+        let (w, h) = (1000.0f32, 640.0f32);
+        let frames = [
+            ("quiet-a", 0.0, 0.0),
+            ("quiet-b", 0.0, 0.5),
+            ("speaking-a", 0.8, 1.0),
+            ("speaking-b", 0.8, 1.5),
+        ];
+        for (name, swell, time) in frames {
+            let snapshot = gtk::Snapshot::new();
+            snapshot.append_color(
+                &gdk::RGBA::new(0.11, 0.11, 0.14, 1.0),
+                &graphene::Rect::new(0.0, 0.0, w, h),
+            );
+            let frame = GlowFrame {
+                opacity: 1.0,
+                colors: GlowLook::Dictation.palette(),
+                time,
+                swell,
+            };
+            draw_glow(&snapshot, w, h, &frame);
+            let node = snapshot.to_node().unwrap();
+            let mut surface =
+                cairo::ImageSurface::create(cairo::Format::ARgb32, w as i32, h as i32).unwrap();
+            {
+                let cr = cairo::Context::new(&surface).unwrap();
+                node.draw(&cr);
+            }
+            surface.flush();
+            let stride = surface.stride() as usize;
+            let bytes = glib::Bytes::from(&*surface.data().unwrap());
+            let texture = gdk::MemoryTexture::new(
+                w as i32,
+                h as i32,
+                gdk::MemoryFormat::B8g8r8a8Premultiplied,
+                &bytes,
+                stride,
+            );
+            texture
+                .save_to_png(dir.join(format!("{name}.png")))
+                .unwrap();
+        }
+    }
 
     fn settle(ms: u64) {
         let context = glib::MainContext::default();

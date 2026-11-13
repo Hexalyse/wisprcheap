@@ -12,8 +12,11 @@ pub mod companion;
 pub mod config;
 pub mod dictionary;
 pub mod env_edit;
+pub mod focus;
 pub mod history;
 pub mod hotkey;
+#[cfg(target_os = "linux")]
+pub mod hyprland;
 pub mod icons;
 pub mod instance;
 pub mod keyboard;

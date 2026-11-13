@@ -1,4 +1,4 @@
-//! Hyprland IPC: where the active window is, so the edge glow can sit on it.
+//! Hyprland IPC: the active window, so the edge glow can sit on it and pasting can tell terminals apart.
 //! Requests go to Hyprland's own socket (no `hyprctl` process): about a millisecond each.
 
 use std::io::{Read, Write};
@@ -18,11 +18,24 @@ pub struct ActiveWindow {
     pub height: i32,
 }
 
+/// What kind of window has the focus.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Focused {
+    /// Window class (the Wayland app id).
+    pub class: String,
+    /// Hyprland tags, without the trailing `*` of dynamic ones (Omarchy tags terminals `terminal`).
+    pub tags: Vec<String>,
+}
+
 #[derive(Deserialize)]
 struct Client {
     at: [i32; 2],
     size: [i32; 2],
     monitor: i64,
+    #[serde(default)]
+    class: String,
+    #[serde(default)]
+    tags: Vec<String>,
     #[serde(default = "yes")]
     mapped: bool,
     #[serde(default)]
@@ -71,6 +84,23 @@ pub fn active_window() -> Option<ActiveWindow> {
     parse(&active, &monitors)
 }
 
+/// The focused window's class and tags, or None (no window focused, not Hyprland, or no answer).
+pub fn focused() -> Option<Focused> {
+    parse_focused(&request("j/activewindow")?)
+}
+
+fn parse_focused(active: &str) -> Option<Focused> {
+    let client: Client = serde_json::from_str(active).ok()?;
+    Some(Focused {
+        class: client.class,
+        tags: client
+            .tags
+            .into_iter()
+            .map(|t| t.trim_end_matches('*').to_string())
+            .collect(),
+    })
+}
+
 fn parse(active: &str, monitors: &str) -> Option<ActiveWindow> {
     // `{}` when no window has the focus
     let client: Client = serde_json::from_str(active).ok()?;
@@ -111,6 +141,20 @@ mod tests {
                 height: 600,
             })
         );
+    }
+
+    #[test]
+    fn focused_class_and_tags() {
+        let active = r#"{"at": [0, 0], "size": [800, 600], "monitor": 0, "class": "foot",
+            "tags": ["terminal*", "pinned"]}"#;
+        assert_eq!(
+            parse_focused(active),
+            Some(Focused {
+                class: "foot".into(),
+                tags: vec!["terminal".into(), "pinned".into()],
+            })
+        );
+        assert_eq!(parse_focused("{}"), None);
     }
 
     #[test]

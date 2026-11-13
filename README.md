@@ -141,8 +141,8 @@ It never takes the focus and clicks go through it. Turn it off with `overlay.ena
 ### Edge glow (Linux)
 
 `overlay.style: edgeGlow` replaces the pill with a soft blue glow rising from the bottom of the **active window** and
-climbing its side edges, like Superwhisper's. Blobs of light drift along the bottom, and the glow reaches higher as
-you speak. It turns violet for a command, breathes while the audio is processed, then briefly flashes cyan (pasted),
+climbing its side edges, like Superwhisper's. Small waves of light travel along the bottom edge, and grow as you
+speak. It turns violet for a command, breathes while the audio is processed, then briefly flashes cyan (pasted),
 light blue (copied), grey (nothing heard) or red (error) before it fades out.
 
 ```yaml
@@ -153,7 +153,9 @@ overlay:
 
 On Hyprland (Omarchy) it follows the focused window through Hyprland's IPC socket, including when the focus changes
 while you speak. With no focused window, on other Wayland compositors (Layer Shell, namespace `wisprcheap-edge-glow`)
-and on X11, it uses the bottom of the whole screen instead. It's drawn with GTK's GPU gradients. Windows keeps the pill.
+and on X11, it uses the bottom of the whole screen instead. It's drawn and blurred by GTK on the GPU (GTK 4.14 or
+newer). Windows keeps the pill. To look at it without recording:
+`WISPRCHEAP_GLOW_PNG_DIR=/tmp/glow cargo test --lib render_glow_frames -- --ignored` writes a few frames as PNG.
 
 ## Translation mode
 
@@ -312,6 +314,9 @@ section of `config.yaml`: keep that file private, like `.env`.
   Linux requires GTK4 Layer Shell 1.0 or newer. Release archives bundle this library; source builds can
   use a distribution package or the dependency script above. The GTK3 `libgtk-layer-shell0` package is unrelated.
 - The clipboard works on X11 and Wayland (data-control protocol, with XWayland's clipboard as the fallback).
+- Terminals paste with Ctrl+Shift+V, so wisprcheap sends that (and Ctrl+Shift+C for command mode) when a terminal has
+  the focus: common terminals and the windows Omarchy tags `terminal` are recognized on Hyprland and X11. Add other
+  window classes to `output.terminalApps`.
 
 ### Wayland
 
