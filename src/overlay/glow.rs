@@ -6,16 +6,18 @@
 //! places it over the active window and draws `GlowFrame`s with GSK gradients, on the GPU.
 
 use std::f32::consts::TAU;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::Feedback;
 use super::OverlayStatus;
+use super::meter::Meter;
 use super::paint::Color;
-use super::scene::loudness;
 use crate::hotkey::Mode;
 
 const SHOW_SECS: f32 = 0.25;
 const HIDE_SECS: f32 = 0.45;
+/// The voice is measured over windows this long (like the pill's waveform bars).
+const READING_EVERY: Duration = Duration::from_millis(80);
 /// Breathing period while processing.
 const BREATHE_SECS: f32 = 1.6;
 
@@ -75,6 +77,12 @@ pub struct GlowScene {
     shown: f32,
     /// Smoothed voice loudness, 0..1.
     voice: f32,
+    /// Loudest input (RMS) of the current window, its loudness, and when the window ends.
+    peak: f32,
+    heard: f32,
+    next_reading: Option<Instant>,
+    /// Loudness relative to the background noise.
+    meter: Meter,
     swell: f32,
     colors: [Color; 3],
     time: f32,
@@ -100,6 +108,10 @@ impl GlowScene {
             look: GlowLook::Hidden,
             shown: 0.0,
             voice: 0.0,
+            peak: 0.0,
+            heard: 0.0,
+            next_reading: None,
+            meter: Meter::new(),
             swell: 0.0,
             colors: GlowLook::Dictation.palette(),
             time: 0.0,
@@ -171,10 +183,26 @@ impl GlowScene {
             self.shown = (self.shown + dt / SHOW_SECS).min(1.0);
         }
 
-        let heard = match self.look {
-            GlowLook::Dictation | GlowLook::Command => loudness(level),
-            _ => 0.0,
-        };
+        if matches!(self.look, GlowLook::Dictation | GlowLook::Command) {
+            if level.is_finite() {
+                self.peak = self.peak.max(level);
+            }
+            if self.next_reading.is_none_or(|t| now >= t) {
+                // no audio callback in the window: nothing to measure
+                self.heard = if self.peak > 0.0 {
+                    self.meter.level(self.peak, now)
+                } else {
+                    0.0
+                };
+                self.peak = 0.0;
+                self.next_reading = Some(now + READING_EVERY);
+            }
+        } else {
+            self.heard = 0.0;
+            self.peak = 0.0;
+            self.next_reading = None;
+        }
+        let heard = self.heard;
         // Rise quickly with the voice, settle slowly between words.
         let tau = if heard > self.voice { 0.05 } else { 0.3 };
         self.voice = approach(self.voice, heard, dt, tau);
@@ -289,12 +317,26 @@ mod tests {
         );
         run(&mut scene, &mut now, 300, 0.3); // about -10 dBFS: loud
         let loud = scene.frame();
-        assert!(loud.swell > 0.9 && loud.opacity > 0.95, "{loud:?}");
+        assert!(loud.swell > 0.85 && loud.opacity > 0.95, "{loud:?}");
         // settles back between words, more slowly than it rose
         run(&mut scene, &mut now, 100, 0.0);
         assert!(scene.frame().swell > 0.5);
         run(&mut scene, &mut now, 2000, 0.0);
         assert!(scene.frame().swell < 0.01);
+    }
+
+    #[test]
+    fn constant_noise_of_a_hot_microphone_stays_discreet() {
+        let mut now = Instant::now();
+        let mut scene = GlowScene::new();
+        scene.set_status(status(Some(Mode::Dictation), false));
+        // -22 dBFS of steady noise (a boosted laptop mic in a quiet room)
+        run(&mut scene, &mut now, 3000, 0.08);
+        let frame = scene.frame();
+        assert!(frame.swell < 0.05, "{frame:?}");
+        // speaking over it still raises the glow
+        run(&mut scene, &mut now, 300, 0.4);
+        assert!(scene.frame().swell > 0.5);
     }
 
     #[test]

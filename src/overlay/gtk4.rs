@@ -320,16 +320,16 @@ fn draw_glow(s: &gtk::Snapshot, w: f32, h: f32, f: &GlowFrame) {
     let (t, swell) = (f.time, f.swell);
     s.push_opacity(f.opacity as f64);
 
-    // How high the glow reaches from the bottom edge.
-    let band = (h * 0.16).clamp(48.0, 150.0) * (0.75 + 0.5 * swell);
+    // How high the glow reaches from the bottom edge: discreet, a little higher with the voice.
+    let band = (h * 0.06).clamp(24.0, 60.0) * (0.8 + 0.7 * swell);
     let base = band * 1.15;
     s.append_linear_gradient(
         &rect(0.0, h - base, w, base),
         &point(0.0, h),
         &point(0.0, h - base),
         &[
-            glow_stop(0.0, c2, 0.5),
-            glow_stop(0.3, c2, 0.22),
+            glow_stop(0.0, c2, 0.42),
+            glow_stop(0.3, c2, 0.18),
             glow_stop(1.0, c2, 0.0),
         ],
     );
@@ -345,7 +345,7 @@ fn draw_glow(s: &gtk::Snapshot, w: f32, h: f32, f: &GlowFrame) {
         let k = i as f32;
         let cx = w * (0.5 + 0.48 * (t * speed + phase).sin());
         let hr = w * (width + 0.05 * (t * 0.7 + k).sin());
-        let vr = band * (1.0 + 0.35 * (t * 1.3 + 1.7 * k).sin());
+        let vr = band * (1.0 + 0.25 * (t * 1.3 + 1.7 * k).sin());
         let color = f.colors[i % 3];
         s.append_radial_gradient(
             &rect(cx - hr, h - vr, 2.0 * hr, vr),
@@ -355,15 +355,15 @@ fn draw_glow(s: &gtk::Snapshot, w: f32, h: f32, f: &GlowFrame) {
             0.0,
             1.0,
             &[
-                glow_stop(0.0, color, 0.55),
-                glow_stop(0.45, color, 0.22),
+                glow_stop(0.0, color, 0.45),
+                glow_stop(0.45, color, 0.18),
                 glow_stop(1.0, color, 0.0),
             ],
         );
     }
 
-    let reach = h * (0.42 + 0.12 * swell) * (1.0 + 0.06 * (t * 0.9).sin());
-    let spread = 18.0 + 22.0 * swell;
+    let reach = h * (0.18 + 0.1 * swell) * (1.0 + 0.06 * (t * 0.9).sin());
+    let spread = 8.0 + 10.0 * swell;
     for (edge, left) in [(0.0, 0.0), (w, w - spread)] {
         s.append_radial_gradient(
             &rect(left, h - reach, spread, reach),
@@ -373,8 +373,8 @@ fn draw_glow(s: &gtk::Snapshot, w: f32, h: f32, f: &GlowFrame) {
             0.0,
             1.0,
             &[
-                glow_stop(0.0, c1, 0.6),
-                glow_stop(0.4, c1, 0.25),
+                glow_stop(0.0, c1, 0.5),
+                glow_stop(0.4, c1, 0.2),
                 glow_stop(1.0, c1, 0.0),
             ],
         );
@@ -383,14 +383,14 @@ fn draw_glow(s: &gtk::Snapshot, w: f32, h: f32, f: &GlowFrame) {
             &rect(line, h - reach, 2.0, reach),
             &point(0.0, h),
             &point(0.0, h - reach),
-            &[glow_stop(0.0, c3, 0.9), glow_stop(1.0, c3, 0.0)],
+            &[glow_stop(0.0, c3, 0.75), glow_stop(1.0, c3, 0.0)],
         );
     }
 
     let period = (w / 2.0).max(1.0);
     let offset = (t * 90.0) % period;
     s.append_repeating_linear_gradient(
-        &rect(0.0, h - 2.5, w, 2.5),
+        &rect(0.0, h - 2.0, w, 2.0),
         &point(-offset, 0.0),
         &point(period - offset, 0.0),
         &[

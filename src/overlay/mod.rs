@@ -11,6 +11,7 @@
 mod glow;
 #[cfg(target_os = "linux")]
 mod hyprland;
+mod meter;
 mod paint;
 mod scene;
 #[cfg(target_os = "linux")]

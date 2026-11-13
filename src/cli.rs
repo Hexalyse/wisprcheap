@@ -188,8 +188,16 @@ pub async fn open_companion(config: &ConfigArgs) -> Result<()> {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x08000000);
     }
-    cmd.spawn()?;
+    reap(cmd.spawn()?);
     Ok(())
+}
+
+/// Wait for a launched process in the background, so it doesn't stay a zombie once it exits
+/// (the dictation app runs for days and opens the companion many times).
+fn reap(mut child: std::process::Child) {
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
 }
 
 /// The companion's executable is not the daemon: always select the sibling explicitly.
@@ -322,11 +330,13 @@ pub fn open_path(path: &Path) -> Result<()> {
     let mut cmd = Command::new("explorer.exe");
     #[cfg(not(windows))]
     let mut cmd = Command::new("xdg-open");
-    cmd.arg(path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
+    reap(
+        cmd.arg(path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?,
+    );
     Ok(())
 }
 

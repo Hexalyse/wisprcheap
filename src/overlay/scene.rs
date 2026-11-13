@@ -12,6 +12,7 @@ use std::collections::VecDeque;
 use std::f32::consts::{FRAC_PI_2, TAU};
 use std::time::{Duration, Instant};
 
+use super::meter::Meter;
 use super::paint::{self, Canvas, Color, Glyph, around};
 use super::{Feedback, OverlayStatus};
 use crate::hotkey::Mode;
@@ -184,12 +185,6 @@ fn approach_color(value: Color, target: Color, dt: f32, tau: f32) -> Color {
     }
 }
 
-/// Microphone RMS (linear) to 0..1, like the Android app: -60 dBFS is silence, -10 dBFS is loud.
-pub(super) fn loudness(rms: f32) -> f32 {
-    let db = 20.0 * rms.max(1e-6).log10();
-    ((db + 60.0) / 50.0).clamp(0.0, 1.0)
-}
-
 fn ease_out_cubic(t: f32) -> f32 {
     1.0 - (1.0 - t).powi(3)
 }
@@ -268,6 +263,8 @@ pub struct Scene {
     next_bar: Instant,
     /// Loudest input since the last bar (RMS).
     peak: f32,
+    /// Bar heights, relative to the background noise.
+    meter: Meter,
     shake_from: Option<Instant>,
     clock: Instant,
     /// The shadow and the pill, reused while they don't change (most frames: only the content moves).
@@ -307,6 +304,7 @@ impl Scene {
             bars: VecDeque::new(),
             next_bar: now,
             peak: 0.0,
+            meter: Meter::new(),
             shake_from: None,
             clock: now,
             backdrop: None,
@@ -433,7 +431,13 @@ impl Scene {
         if now < self.next_bar {
             return;
         }
-        self.bars.push_back(loudness(self.peak));
+        // no audio callback in this window: nothing to measure
+        let level = if self.peak > 0.0 {
+            self.meter.level(self.peak, now)
+        } else {
+            0.0
+        };
+        self.bars.push_back(level);
         while self.bars.len() > BARS + 1 {
             self.bars.pop_front();
         }
@@ -698,13 +702,6 @@ mod tests {
         });
         scene.feedback(Feedback::Error, t0);
         assert!(!scene.on_screen(t0));
-    }
-
-    #[test]
-    fn loudness_maps_like_android() {
-        assert_eq!(loudness(0.0), 0.0);
-        assert!((loudness(10f32.powf(-35.0 / 20.0)) - 0.5).abs() < 1e-4);
-        assert_eq!(loudness(1.0), 1.0);
     }
 
     #[test]
