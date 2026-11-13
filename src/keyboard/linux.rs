@@ -148,14 +148,18 @@ fn capitalize(s: &str) -> String {
     }
 }
 
-pub fn tap_ctrl(letter: Letter) {
+pub fn capture_escape(on: bool) {
+    crate::hyprland::set_escape_bind(on);
+}
+
+pub fn tap_ctrl(letter: Letter, shift: bool) {
     match INJECTOR.get() {
         Some(Some(injector)) => {
-            if let Err(e) = injector.tap_ctrl(letter) {
+            if let Err(e) = injector.tap_ctrl(letter, shift) {
                 crate::warn!("[output] could not send a key: {e}");
             }
         }
-        _ => x11::tap_ctrl(letter),
+        _ => x11::tap_ctrl(letter, shift),
     }
 }
 

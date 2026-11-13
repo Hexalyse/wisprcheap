@@ -28,6 +28,7 @@ pub mod keys {
     pub const META: KeyCode = 0x0E5B;
     pub const META_RIGHT: KeyCode = 0x0E5C;
     /// Keys without a name get codes above this (they never match a combo).
+    pub const ESCAPE: KeyCode = 0x0001;
     pub const UNKNOWN_BASE: KeyCode = 0x10000;
 }
 
@@ -361,9 +362,11 @@ impl PushToTalk {
     }
 
     fn held(&self, combo: Option<&Combo>) -> bool {
+        // An empty combo (`hotkey.keys: []`) is a disabled shortcut, never held.
         combo.is_some_and(|c| {
-            c.iter()
-                .all(|group| group.iter().any(|code| self.pressed.contains(code)))
+            !c.is_empty()
+                && c.iter()
+                    .all(|group| group.iter().any(|code| self.pressed.contains(code)))
         })
     }
 
@@ -526,6 +529,7 @@ mod tests {
                 tap_max_ms: 250,
                 double_tap_window_ms: 150,
                 cancel_on_other_key: true,
+                escape_cancels: true,
             };
             Self {
                 ptt: PushToTalk::new(&opts).unwrap(),
@@ -593,6 +597,26 @@ mod tests {
             Mode::Dictation => "dictation",
             Mode::Command => "command",
         }
+    }
+
+    #[test]
+    fn empty_dictation_keys_disable_the_dictation_shortcut() {
+        let mut h = Harness::new();
+        let mut opts = h.ptt.opts.clone();
+        opts.keys = Vec::new();
+        validate(&opts).unwrap();
+        h.ptt.configure(&opts).unwrap();
+        assert_eq!(h.ptt.label(), "");
+        // Pressing any other shortcut key alone doesn't start a dictation...
+        h.down(&[F13]);
+        h.sleep(400);
+        h.up(&[F13]);
+        assert!(h.events.is_empty(), "{:?}", h.events);
+        // ...while the command shortcut keeps working.
+        h.down(&[F13, F14, F16]);
+        h.sleep(400);
+        h.up(&[F16, F14, F13]);
+        assert_eq!(h.events, ["start:command", "stop:command"]);
     }
 
     #[test]
@@ -717,6 +741,7 @@ mod tests {
                 tap_max_ms: 250,
                 double_tap_window_ms: 150,
                 cancel_on_other_key: true,
+                escape_cancels: true,
             })
             .unwrap();
         h.down(&[F13, F14]);

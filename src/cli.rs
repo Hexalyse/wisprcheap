@@ -1,4 +1,4 @@
-//! Command line: `wisprcheap [start|run|ui|stop|devices|stats|shortcut|sounds|wayland]`.
+//! Command line: `wisprcheap [start|run|ui|stop|record|devices|stats|shortcut|sounds|wayland]`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -22,6 +22,8 @@ Commands:
   run         Run in the foreground (logs in this terminal)
   ui          Open the on-demand desktop companion (also works while stopped)
   stop        Quit the running instance
+  record      Start or stop a dictation in the running instance: record <start|stop|toggle|cancel>
+              (for desktops with their own dictation keys, such as Omarchy)
   devices     List audio input/output devices
   stats       Monthly cost summary from the history
   sync        Sync with a wisprcheap server (`wisprcheap sync help` for the commands)
@@ -59,7 +61,9 @@ fn parse_args(raw: Vec<String>, gui_default: bool) -> Result<Args> {
     };
     let mut it = raw.into_iter();
     while let Some(arg) = it.next() {
-        if args.command == "sync" && !matches!(arg.as_str(), "-c" | "--config") {
+        if matches!(args.command.as_str(), "sync" | "record")
+            && !matches!(arg.as_str(), "-c" | "--config")
+        {
             args.rest.push(arg);
             continue;
         }
@@ -116,6 +120,7 @@ pub fn main(gui_binary: bool) {
             }
         },
         "stop" => stop(),
+        "record" => record(&args.rest),
         "devices" => devices(),
         "stats" => stats(&args),
         "sync" => crate::sync::cli::main(&args.rest, &args.config),
@@ -183,8 +188,16 @@ pub async fn open_companion(config: &ConfigArgs) -> Result<()> {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x08000000);
     }
-    cmd.spawn()?;
+    reap(cmd.spawn()?);
     Ok(())
+}
+
+/// Wait for a launched process in the background, so it doesn't stay a zombie once it exits
+/// (the dictation app runs for days and opens the companion many times).
+fn reap(mut child: std::process::Child) {
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
 }
 
 /// The companion's executable is not the daemon: always select the sibling explicitly.
@@ -317,14 +330,18 @@ pub fn open_path(path: &Path) -> Result<()> {
     let mut cmd = Command::new("explorer.exe");
     #[cfg(not(windows))]
     let mut cmd = Command::new("xdg-open");
-    cmd.arg(path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
+    reap(
+        cmd.arg(path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?,
+    );
     Ok(())
 }
 
+// gtk::MessageDialog is deprecated since GTK 4.10 (for AlertDialog), but works on every GTK 4.
+#[allow(deprecated)]
 fn message_box(message: &str, is_error: bool) {
     #[cfg(windows)]
     {
@@ -437,6 +454,56 @@ fn stop() -> i32 {
         }
     );
     0
+}
+
+/// `wisprcheap record <start|stop|toggle|cancel>`: drive a dictation from outside,
+/// e.g. from a desktop's own push-to-talk keys. Stopping when nothing runs succeeds;
+/// exit code 3 means no instance is running (so a caller can start one).
+fn record(rest: &[String]) -> i32 {
+    let [action] = rest else {
+        eprintln!("Usage: wisprcheap record <start|stop|toggle|cancel>");
+        return 2;
+    };
+    if !matches!(action.as_str(), "start" | "stop" | "toggle" | "cancel") {
+        eprintln!("Usage: wisprcheap record <start|stop|toggle|cancel>");
+        return 2;
+    }
+    let command = format!("record-{action}");
+    let reply = runtime().block_on(async {
+        // An instance launched a moment ago answers "starting" until it is ready.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let reply = send_command(&command, Duration::from_secs(2)).await;
+            if reply.as_deref() != Some("starting") || Instant::now() >= deadline {
+                return reply;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    });
+    match reply.as_deref() {
+        Some("recording" | "stopped" | "idle") => 0,
+        None if matches!(action.as_str(), "stop" | "cancel") => 0,
+        None => {
+            eprintln!("wisprcheap is not running. Start it with `wisprcheap start`.");
+            3
+        }
+        Some("paused") => {
+            eprintln!("Dictation is paused.");
+            1
+        }
+        Some("starting") => {
+            eprintln!("wisprcheap is still starting.");
+            1
+        }
+        Some("unknown-command") => {
+            eprintln!("The running wisprcheap is too old for `record`: restart it.");
+            1
+        }
+        Some(other) => {
+            eprintln!("Could not {action} the recording ({other}). See the log.");
+            1
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

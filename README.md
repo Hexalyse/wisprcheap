@@ -92,6 +92,7 @@ config, `.env`, history, log, and a `.cache/` folder). Otherwise:
 | --------------------- | -------------------------------------------------------------------- |
 | `wisprcheap start`    | Start in the background and return (the default command; `--config <file>` to pick a config) |
 | `wisprcheap stop`     | Quit the running instance                                            |
+| `wisprcheap record <start\|stop\|toggle\|cancel>` | Start or stop a dictation in the running instance, for desktops with their own dictation keys ([Omarchy](#omarchy)) |
 | `wisprcheap run`      | Run in the current terminal instead (Ctrl+C quits), still with the tray icon (`--no-tray` without) |
 | `wisprcheap ui`       | Open or focus the desktop companion; works while dictation is stopped |
 | `wisprcheap shortcut` | Create or update the desktop shortcut                                |
@@ -137,6 +138,25 @@ how it went: a check (pasted), a clipboard (only copied), a crossed-out micropho
 
 It never takes the focus and clicks go through it. Turn it off with `overlay.enabled: false`.
 
+### Edge glow (Linux)
+
+`overlay.style: edgeGlow` replaces the pill with a soft blue glow along the bottom of the **active window** that
+continues up its side edges, like Superwhisper's: one continuous band, brightest at the edges. Its top edge is a wave
+that drifts slowly to the right; when you speak it speeds up and rises, and it settles back in each pause. It turns violet for a command, breathes while the audio is processed, then briefly flashes cyan (pasted),
+light blue (copied), grey (nothing heard) or red (error) before it fades out.
+
+```yaml
+overlay:
+  enabled: true
+  style: edgeGlow   # or pill (the default)
+```
+
+On Hyprland (Omarchy) it follows the focused window through Hyprland's IPC socket, including when the focus changes
+while you speak. With no focused window, on other Wayland compositors (Layer Shell, namespace `wisprcheap-edge-glow`)
+and on X11, it uses the bottom of the whole screen instead. It's drawn and blurred by GTK on the GPU (GTK 4.14 or
+newer). Windows keeps the pill. To look at it without recording:
+`WISPRCHEAP_GLOW_PNG_DIR=/tmp/glow cargo test --lib render_glow_frames -- --ignored` writes a few frames as PNG.
+
 ## Translation mode
 
 List the pairs you want in `config.yaml`; they appear under **Translate dictation** in the tray:
@@ -164,6 +184,7 @@ unless `translation.model` is set (e.g. `gpt-6-sol` with `reasoningEffort: low` 
 | Press Alt while dictating with Ctrl+Win  | Switches that recording to command mode (quick rising arpeggio) |
 | Select a word, press Ctrl+Win+Shift      | Adds it to the dictionary (two high beeps; a low beep if it was already there) |
 | Ctrl+Win + another key (Left, D...)      | The recording is cancelled and the system shortcut works as usual |
+| Escape while recording                   | The recording is cancelled, however it was started (hands-free, Omarchy's keys), and the Escape doesn't reach the app (Windows; Hyprland with the [Omarchy integration](#omarchy)). `hotkey.escapeCancels: false` turns it off |
 | A single short tap                       | Low beep, nothing is sent                                      |
 | Transcription fails                      | Error buzz. The audio is kept in `recordings/` and can be retried from the tray |
 | Polish fails or times out                | The raw transcript is pasted instead                           |
@@ -294,6 +315,9 @@ section of `config.yaml`: keep that file private, like `.env`.
   Linux requires GTK4 Layer Shell 1.0 or newer. Release archives bundle this library; source builds can
   use a distribution package or the dependency script above. The GTK3 `libgtk-layer-shell0` package is unrelated.
 - The clipboard works on X11 and Wayland (data-control protocol, with XWayland's clipboard as the fallback).
+- Terminals paste with Ctrl+Shift+V, so wisprcheap sends that (and Ctrl+Shift+C for command mode) when a terminal has
+  the focus: common terminals and the windows Omarchy tags `terminal` are recognized on Hyprland and X11. Add other
+  window classes to `output.terminalApps`.
 
 ### Wayland
 
@@ -346,6 +370,26 @@ Good to know:
 - Keyboards plugged in while wisprcheap runs are picked up automatically.
 - `WISPRCHEAP_KEYBOARD=x11` forces the X11 method, and `WISPRCHEAP_KEYBOARD=evdev` forces the input devices
   (on X11 too).
+
+### Omarchy
+
+[Omarchy](https://omarchy.org/) binds its own dictation keys (**Alt + Space** toggles, holding **Right Alt** is
+push-to-talk) to a backend chosen in its menu. wisprcheap can be that backend, next to Voxtype and Superwhisper: the
+keys then drive wisprcheap through `wisprcheap record`, with the same cues, overlay, transcription, polish and paste as
+its own hotkey.
+
+```sh
+install -Dm755 target/release/wisprcheap target/release/wisprcheap-ui -t ~/.local/bin
+contrib/omarchy/install.sh
+```
+
+`install.sh` puts the Omarchy adapter and its installer and remover in `~/.local/bin`, and adds **WisprCheap** to
+Omarchy's menu: **Setup > Defaults > Dictation** (and **Remove > Dictation**). Picking it there sets up the keyboard
+access if needed (the [one-time setup](#wayland), with sudo), starts wisprcheap at login, and makes it the backend.
+The adapter also starts wisprcheap on the first dictation if it isn't running.
+
+To use only Omarchy's keys, turn off wisprcheap's own dictation shortcut with `hotkey.keys: []` (and `commandKeys` /
+`addWordKeys` if you don't want those either).
 
 ## License
 

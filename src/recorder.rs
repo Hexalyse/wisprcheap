@@ -78,6 +78,14 @@ pub fn take_level() -> f32 {
     f32::from_bits(LEVEL.swap(0, Ordering::Relaxed))
 }
 
+/// RMS of a block without its DC offset (its mean), which some microphones have, and which would
+/// otherwise read as constant loudness.
+fn ac_rms(sum: f32, squares: f32, frames: usize) -> f32 {
+    let n = frames as f32;
+    let mean = sum / n;
+    (squares / n - mean * mean).max(0.0).sqrt()
+}
+
 struct Captured {
     samples: Vec<f32>,
     rate: u32,
@@ -127,17 +135,18 @@ where
         config,
         move |data: &[T], _| {
             let mut buf = buffer.lock().unwrap();
-            let mut squares = 0.0f32;
+            let (mut sum, mut squares) = (0.0f32, 0.0f32);
             let mut frames = 0usize;
             for frame in data.chunks(channels) {
-                let sum: f32 = frame.iter().map(|&s| f32::from_sample(s)).sum();
-                let mono = sum / frame.len() as f32;
+                let total: f32 = frame.iter().map(|&s| f32::from_sample(s)).sum();
+                let mono = total / frame.len() as f32;
+                sum += mono;
                 squares += mono * mono;
                 frames += 1;
                 buf.push(mono);
             }
             if frames > 0 {
-                let rms = (squares / frames as f32).sqrt();
+                let rms = ac_rms(sum, squares, frames);
                 if rms.is_finite() {
                     LEVEL.fetch_max(rms.to_bits(), Ordering::Relaxed);
                 }
@@ -257,5 +266,23 @@ impl Recorder {
         if let Some(handle) = self.stop() {
             drop(handle.finish());
         }
+    }
+}
+
+#[cfg(test)]
+mod level_tests {
+    use super::ac_rms;
+
+    #[test]
+    fn level_ignores_dc_offset() {
+        // a square wave of amplitude 0.5 around a +0.4 offset: RMS 0.5, not 0.64
+        let samples: Vec<f32> = (0..480)
+            .map(|i| if i % 2 == 0 { 0.9 } else { -0.1 })
+            .collect();
+        let sum: f32 = samples.iter().sum();
+        let squares: f32 = samples.iter().map(|s| s * s).sum();
+        assert!((ac_rms(sum, squares, samples.len()) - 0.5).abs() < 1e-3);
+        // a pure offset is silence
+        assert!(ac_rms(0.4 * 480.0, 0.16 * 480.0, 480) < 1e-3);
     }
 }

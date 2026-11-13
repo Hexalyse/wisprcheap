@@ -203,6 +203,7 @@ impl Shared {
             let st = self.status.lock().unwrap();
             let overlay = OverlayStatus {
                 enabled: p.config.overlay.enabled,
+                style: p.config.overlay.style,
                 recording: st.recording.then_some(Recording {
                     mode: st.recording_mode,
                     hands_free,
@@ -221,7 +222,12 @@ impl Shared {
             } else if st.paused {
                 (IconName::Paused, "Paused".to_string())
             } else {
-                (IconName::Idle, format!("Ready{translating} - hold {label}"))
+                let hint = if label.is_empty() {
+                    String::new()
+                } else {
+                    format!(" - hold {label}")
+                };
+                (IconName::Idle, format!("Ready{translating}{hint}"))
             };
             (icon, text, overlay)
         };

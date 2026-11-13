@@ -323,16 +323,26 @@ impl Injector {
         Ok(Self(Mutex::new(device)))
     }
 
-    /// Press and release Ctrl+`letter`. The key is the one at that position on a QWERTY keyboard,
-    /// which the compositor translates with the current layout (the same letter on AZERTY, QWERTZ, Colemak).
-    pub fn tap_ctrl(&self, letter: Letter) -> io::Result<()> {
+    /// Press and release Ctrl+`letter` (Ctrl+Shift+`letter` with `shift`). The key is the one at that position
+    /// on a QWERTY keyboard, which the compositor translates with the current layout (the same letter on
+    /// AZERTY, QWERTZ, Colemak).
+    pub fn tap_ctrl(&self, letter: Letter, shift: bool) -> io::Result<()> {
         let key = match letter {
             Letter::C => EvKey::KEY_C,
             Letter::V => EvKey::KEY_V,
         };
         let ctrl = EvKey::KEY_LEFTCTRL;
+        let mut sequence = vec![(ctrl, 1)];
+        if shift {
+            sequence.push((EvKey::KEY_LEFTSHIFT, 1));
+        }
+        sequence.extend([(key, 1), (key, 0)]);
+        if shift {
+            sequence.push((EvKey::KEY_LEFTSHIFT, 0));
+        }
+        sequence.push((ctrl, 0));
         let mut device = self.0.lock().unwrap();
-        for (code, value) in [(ctrl, 1), (key, 1), (key, 0), (ctrl, 0)] {
+        for (code, value) in sequence {
             device.emit(&[InputEvent::new(EventType::KEY.0, code.0, value)])?;
             std::thread::sleep(Duration::from_millis(8));
         }
@@ -448,7 +458,7 @@ mod tests {
         // Our own virtual keyboard is never read.
         let injector = Injector::new().unwrap();
         std::thread::sleep(Duration::from_millis(500));
-        injector.tap_ctrl(Letter::V).unwrap();
+        injector.tap_ctrl(Letter::V, false).unwrap();
         assert_eq!(collect(&mut rx, Duration::from_millis(500)), []);
 
         // A keyboard connected later is picked up; unplugging it releases the keys it held.

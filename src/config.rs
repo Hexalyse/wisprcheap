@@ -49,6 +49,8 @@ pub struct HotkeyConfig {
     pub double_tap_window_ms: u64,
     /// Cancel the recording if another key is pressed while holding (e.g. Ctrl+Win+Left).
     pub cancel_on_other_key: bool,
+    /// Escape cancels a recording in progress, however it was started (hands-free, `wisprcheap record`...).
+    pub escape_cancels: bool,
 }
 
 impl Default for HotkeyConfig {
@@ -61,6 +63,7 @@ impl Default for HotkeyConfig {
             tap_max_ms: 250,
             double_tap_window_ms: 350,
             cancel_on_other_key: true,
+            escape_cancels: true,
         }
     }
 }
@@ -317,6 +320,9 @@ pub struct OutputConfig {
     pub restore_clipboard: bool,
     /// Append a space so consecutive dictations don't run together.
     pub trailing_space: bool,
+    /// Linux: more window classes to treat as terminals, which paste with Ctrl+Shift+V and copy with
+    /// Ctrl+Shift+C (common terminals, and windows Omarchy tags `terminal`, are already known).
+    pub terminal_apps: Vec<String>,
 }
 
 impl Default for OutputConfig {
@@ -325,6 +331,7 @@ impl Default for OutputConfig {
             paste: true,
             restore_clipboard: false,
             trailing_space: true,
+            terminal_apps: Vec::new(),
         }
     }
 }
@@ -350,12 +357,29 @@ impl Default for SoundsConfig {
 pub struct OverlayConfig {
     /// Show a small indicator at the bottom center of the screen while recording and processing.
     pub enabled: bool,
+    /// What the indicator looks like.
+    pub style: OverlayStyle,
 }
 
 impl Default for OverlayConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            style: OverlayStyle::Pill,
+        }
     }
+}
+
+/// `overlay.style`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OverlayStyle {
+    /// A small pill at the bottom center of the screen, with a live waveform.
+    #[default]
+    Pill,
+    /// A blue glow at the bottom of the active window that follows the voice (Linux; the pill elsewhere).
+    #[serde(alias = "edge-glow", alias = "edgeglow")]
+    EdgeGlow,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -692,11 +716,6 @@ fn validate(config: &mut Config) -> Vec<String> {
         }
     };
     let h = &config.hotkey;
-    check(
-        !h.keys.is_empty(),
-        "hotkey.keys",
-        "Too small: expected array to have >=1 items",
-    );
     check(
         h.tap_max_ms > 0,
         "hotkey.tapMaxMs",

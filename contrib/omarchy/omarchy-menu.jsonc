@@ -1,0 +1,4 @@
+  // WisprCheap as a dictation backend (from wisprcheap's contrib/omarchy/install.sh)
+  "setup.default.dictation.wisprcheap": {"icon":"","label":"WisprCheap","checked":"[[ \"$(omarchy-default-dictation)\" == \"wisprcheap\" ]]","action":"omarchy-default-dictation wisprcheap"},
+  "remove.dictation": {"when":"omarchy-pkg-present voxtype-bin || omarchy-pkg-present superwhisper-bin || [[ -f ${XDG_CONFIG_HOME:-$HOME/.config}/autostart/wisprcheap.desktop ]]"},
+  "remove.dictation.wisprcheap": {"icon":"","label":"WisprCheap","when":"[[ -f ${XDG_CONFIG_HOME:-$HOME/.config}/autostart/wisprcheap.desktop ]]","action":"omarchy-launch-floating-terminal-with-presentation omarchy-remove-dictation-wisprcheap"},

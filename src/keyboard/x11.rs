@@ -153,17 +153,20 @@ fn key_to_code(key: Key) -> KeyCode {
     named(name)
 }
 
-pub fn tap_ctrl(letter: Letter) {
+pub fn tap_ctrl(letter: Letter, shift: bool) {
     let key = match letter {
         Letter::C => Key::KeyC,
         Letter::V => Key::KeyV,
     };
-    let events = [
-        EventType::KeyPress(Key::ControlLeft),
-        EventType::KeyPress(key),
-        EventType::KeyRelease(key),
-        EventType::KeyRelease(Key::ControlLeft),
-    ];
+    let mut events = vec![EventType::KeyPress(Key::ControlLeft)];
+    if shift {
+        events.push(EventType::KeyPress(Key::ShiftLeft));
+    }
+    events.extend([EventType::KeyPress(key), EventType::KeyRelease(key)]);
+    if shift {
+        events.push(EventType::KeyRelease(Key::ShiftLeft));
+    }
+    events.push(EventType::KeyRelease(Key::ControlLeft));
     for event in events {
         if let Err(e) = rdev::simulate(&event) {
             crate::warn!("[output] could not send a key: {e:?}");

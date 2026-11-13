@@ -6,7 +6,7 @@
 hotkey:
   # Hold to dictate. All keys must be held. Ctrl / Shift / Alt / Win match left or right;
   # use CtrlRight, AltLeft, F13... for a specific key. (Win is the Super/Meta key on Linux.)
-  keys: [Ctrl, Win]
+  keys: [Ctrl, Win]   # [] = no dictation shortcut, only `wisprcheap record` (e.g. Omarchy's dictation keys)
   # Hold to speak an instruction: it rewrites the selected text ("make this more formal", "translate to English"),
   # or writes new text at the cursor when nothing is selected. Pressing Alt during a dictation switches to it. [] disables.
   commandKeys: [Ctrl, Win, Alt]
@@ -18,6 +18,8 @@ hotkey:
   doubleTapWindowMs: 350
   # Pressing any other key while holding cancels the recording, so Ctrl+Win+Left/Right/D still work normally.
   cancelOnOtherKey: true
+  # Escape cancels a recording in progress, however it was started (hands-free, Omarchy's dictation keys...).
+  escapeCancels: true
 
 recording:
   device: default          # "default" follows the system default mic; or an index / part of a name (see `wisprcheap devices`)
@@ -101,6 +103,9 @@ output:
   paste: true              # simulate Ctrl+V into the focused app (the text is always copied to the clipboard)
   restoreClipboard: false  # true = put the previous clipboard content back after pasting
   trailingSpace: true      # so consecutive dictations don't run together
+  # Linux: terminals paste with Ctrl+Shift+V (and copy with Ctrl+Shift+C). Common terminals and the windows
+  # Omarchy tags "terminal" are detected on Hyprland and X11; add other window classes here.
+  terminalApps: []
 
 sounds:
   enabled: true
@@ -108,6 +113,7 @@ sounds:
 
 overlay:
   enabled: true            # small indicator at the bottom center of the screen while recording and transcribing
+  style: pill              # pill | edgeGlow (Linux: a blue glow at the bottom of the active window, like Superwhisper)
 
 history:
   enabled: true

@@ -1,0 +1,79 @@
+#!/bin/bash
+
+# omarchy:summary=Install and configure WisprCheap dictation
+# omarchy:requires-sudo=true
+#
+# Makes wisprcheap Omarchy's dictation backend: Omarchy's dictation keys (Alt + Space to toggle, hold
+# Right Alt to talk) then drive it through `omarchy-dictation-wisprcheap`. Run by Omarchy's menu
+# (Setup > Defaults > Dictation > WisprCheap), through `omarchy default dictation wisprcheap`.
+
+set -e
+
+config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+
+if omarchy-cmd-missing wisprcheap; then
+  echo "WisprCheap isn't installed: put wisprcheap and wisprcheap-ui on your PATH (for example in"
+  echo "~/.local/bin), from a release archive or a source build: https://github.com/Hexalyse/wisprcheap"
+  exit 1
+fi
+if omarchy-cmd-missing omarchy-dictation-wisprcheap; then
+  echo "The Omarchy adapter is missing: install contrib/omarchy/omarchy-dictation-wisprcheap"
+  echo "from the wisprcheap repository next to this script (for example in ~/.local/bin)."
+  exit 1
+fi
+
+# Wayland: reading the keyboards and pasting need access to /dev/input and /dev/uinput.
+if ! wisprcheap wayland >/dev/null 2>&1; then
+  echo "WisprCheap needs access to the keyboards and to a virtual keyboard to paste on Wayland."
+  if gum confirm --affirmative "$(omarchy-i18n common.yes)" --negative "$(omarchy-i18n common.no)" \
+    "Give the user at this computer that access (a udev rule, needs sudo)?"; then
+    sudo tee /etc/udev/rules.d/70-wisprcheap.rules >/dev/null <<'EOF'
+SUBSYSTEM=="input", ENV{ID_INPUT_KEYBOARD}=="1", TAG+="uaccess"
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"
+EOF
+    echo uinput | sudo tee /etc/modules-load.d/wisprcheap.conf >/dev/null
+    sudo modprobe uinput
+    sudo udevadm control --reload-rules
+    sudo udevadm trigger
+    sleep 1
+  fi
+fi
+
+# Desktop integration Omarchy loads while wisprcheap is the backend: the glow and the pill animate
+# themselves, so Hyprland's layer fade must not hold them back; and Escape cancels a recording without
+# reaching the focused app.
+mkdir -p "$config_home/wisprcheap"
+cat > "$config_home/wisprcheap/shortcuts.lua" <<'EOF'
+-- Written by omarchy-install-dictation-wisprcheap; loaded by Omarchy while WisprCheap is the dictation backend.
+
+-- The recording overlays animate themselves: Hyprland's layer animations would hold them back.
+hl.layer_rule({ match = { namespace = "^wisprcheap-(overlay|edge-glow)$" }, no_anim = true, animation = "none" })
+
+-- Escape cancels a recording without reaching the focused app. WisprCheap enables this bind only while it
+-- records (over Hyprland's socket); if it isn't running anymore (a crash), the bind turns itself off.
+wisprcheap_escape = hl.bind("Escape", hl.dsp.exec_cmd(
+  [[pgrep -x wisprcheap >/dev/null && wisprcheap record cancel || hyprctl eval 'if wisprcheap_escape then wisprcheap_escape:set_enabled(false) end']]
+), { description = "WisprCheap: cancel the recording" })
+wisprcheap_escape:set_enabled(false)
+EOF
+
+# Start at login (Omarchy runs XDG autostart entries), and now.
+mkdir -p "$config_home/autostart"
+cat > "$config_home/autostart/wisprcheap.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=WisprCheap
+Comment=Push-to-talk dictation
+Exec=$(command -v wisprcheap) start
+Terminal=false
+X-GNOME-Autostart-enabled=true
+EOF
+wisprcheap start >/dev/null
+
+omarchy-dictation-use wisprcheap
+omarchy-restart-hyprctl
+
+echo "WisprCheap is Omarchy's dictation backend."
+echo "To use only Omarchy's keys, turn off WisprCheap's own Ctrl + Win shortcut with"
+echo "hotkey.keys: [] in $config_home/wisprcheap/config.yaml."
+omarchy-notification-send -g "WisprCheap Dictation Ready" "$(omarchy-i18n dictation.hint)" -t 10000

@@ -329,7 +329,9 @@ pub async fn process_command(sh: &Arc<Shared>, pcm: Arc<Vec<i16>>) {
 
     // Copy the selection while the instruction is being transcribed.
     let hotkey = sh.hotkey.clone();
-    let selection_task = tokio::spawn(async move { capture_selection(&hotkey).await });
+    let terminal_apps = p.config.output.terminal_apps.clone();
+    let selection_task =
+        tokio::spawn(async move { capture_selection(&hotkey, &terminal_apps).await });
     let transcribed = transcribe(&p, &pcm, &mut entry, None).await;
     let selection = selection_task.await.unwrap_or(Selection {
         text: None,
@@ -439,7 +441,8 @@ pub async fn process_command(sh: &Arc<Shared>, pcm: Arc<Vec<i16>>) {
 pub async fn add_word(sh: &Arc<Shared>, source: AddWordSource) {
     let text = match source {
         AddWordSource::Selection => {
-            let selection = capture_selection(&sh.hotkey).await;
+            let terminal_apps = sh.pipeline().config.output.terminal_apps.clone();
+            let selection = capture_selection(&sh.hotkey, &terminal_apps).await;
             restore_clipboard(selection.previous.as_deref()).await;
             selection.text
         }

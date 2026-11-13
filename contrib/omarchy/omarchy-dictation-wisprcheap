@@ -1,0 +1,22 @@
+#!/bin/bash
+
+# omarchy:summary=Record dictation using wisprcheap
+# omarchy:args=<start|stop|toggle>
+#
+# Omarchy dictation backend: Omarchy's dictation keys (Alt + Space to toggle,
+# hold Right Alt to talk) drive the running wisprcheap. Install it on the PATH
+# next to `wisprcheap`, then select it with `omarchy-dictation-use wisprcheap`.
+
+case "${1:-}" in
+  start|toggle)
+    wisprcheap record "$1"
+    status=$?
+    # Not running yet (first dictation after login): start it, then record.
+    if ((status == 3)); then
+      wisprcheap start >/dev/null && exec wisprcheap record "$1"
+    fi
+    exit "$status"
+    ;;
+  stop) exec wisprcheap record stop ;;
+  *) echo "Usage: omarchy dictation wisprcheap <start|stop|toggle>" >&2; exit 1 ;;
+esac

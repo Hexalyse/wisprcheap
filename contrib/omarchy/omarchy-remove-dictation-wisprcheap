@@ -1,0 +1,20 @@
+#!/bin/bash
+
+# omarchy:summary=Remove WisprCheap from Omarchy's dictation
+#
+# Undoes omarchy-install-dictation-wisprcheap: stops using wisprcheap as Omarchy's dictation backend and
+# removes its autostart entry and Omarchy integration. wisprcheap itself, its settings, history and the
+# keyboard access rule stay (`wisprcheap stop` quits it; the README explains removing the udev rule).
+
+set -e
+
+config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+
+backend_config="$config_home/omarchy/defaults/dictation"
+if [[ -f $backend_config && $(< "$backend_config") == "wisprcheap" ]]; then
+  omarchy-dictation-wisprcheap stop || true
+  rm "$backend_config"
+fi
+rm -f "$config_home/autostart/wisprcheap.desktop" "$config_home/wisprcheap/shortcuts.lua"
+omarchy-restart-hyprctl
+echo "WisprCheap is no longer Omarchy's dictation backend. Pick another one in Setup > Defaults > Dictation."

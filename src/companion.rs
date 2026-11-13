@@ -48,7 +48,7 @@ fields![
         "hotkey.keys",
         "Dictation shortcut",
         Keys,
-        "Key names separated by +, for example Ctrl + Win"
+        "Key names separated by +, for example Ctrl + Win. Leave empty to dictate only through `wisprcheap record` (Omarchy's dictation keys)"
     ),
     (
         "General",
@@ -80,6 +80,13 @@ fields![
     ),
     (
         "General",
+        "hotkey.escapeCancels",
+        "Escape cancels the recording",
+        Bool,
+        "However it was started: hands-free, or Omarchy's dictation keys"
+    ),
+    (
+        "General",
         "hotkey.tapMaxMs",
         "Maximum tap duration (ms)",
         Number,
@@ -98,6 +105,13 @@ fields![
         "Show the native recording overlay",
         Bool,
         "The overlay remains native; this window is independent"
+    ),
+    (
+        "General",
+        "overlay.style",
+        "Overlay style",
+        Text,
+        "pill (bottom of the screen) or edgeGlow (glow at the bottom of the active window, Linux)"
     ),
     (
         "General",

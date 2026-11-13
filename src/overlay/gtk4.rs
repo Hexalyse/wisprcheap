@@ -1,11 +1,13 @@
-//! GTK4 surface host for the existing software-rendered overlay.
+//! GTK4 surface host for the existing software-rendered overlay, and for the edge glow.
 //! Wayland uses Layer Shell; X11 positioning/stacking uses a small native adapter.
 
+use super::glow::{GlowFrame, GlowScene};
 use super::paint::Canvas;
 use super::scene::{CANVAS_H, CANVAS_W, Scene};
-use super::{Feedback, OverlayStatus, x11};
+use super::{Feedback, OverlayStatus, OverlayStyle, x11};
+use crate::hyprland;
 use gtk::prelude::*;
-use gtk::{cairo, gdk, glib};
+use gtk::{cairo, gdk, glib, graphene, gsk};
 use gtk_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -27,25 +29,9 @@ impl Inner {
     fn place(&mut self) {
         self.resize_canvas(self.window.scale_factor());
         let Some(native) = &self.x11 else { return };
-        let pointer = native.pointer().ok();
-        let monitors = gtk::prelude::WidgetExt::display(&self.window).monitors();
-        let monitors: Vec<gdk::Monitor> = (0..monitors.n_items())
-            .filter_map(|i| monitors.item(i).and_downcast::<gdk::Monitor>())
-            .collect();
-        let monitor = monitors
-            .iter()
-            .find(|monitor| {
-                let g = monitor.geometry();
-                let scale = monitor.scale_factor().max(1);
-                pointer.is_some_and(|(x, y)| {
-                    x >= g.x() * scale
-                        && x < (g.x() + g.width()) * scale
-                        && y >= g.y() * scale
-                        && y < (g.y() + g.height()) * scale
-                })
-            })
-            .or_else(|| monitors.first());
-        let Some(monitor) = monitor else { return };
+        let Some(monitor) = pointer_monitor(&self.window, native) else {
+            return;
+        };
         let area = monitor
             .downcast_ref::<gdk4_x11::X11Monitor>()
             .map(|monitor| monitor.workarea())
@@ -97,7 +83,31 @@ impl Inner {
     }
 }
 
-fn create() -> Result<Rc<RefCell<Inner>>, String> {
+/// X11: the monitor under the pointer (where the user is working), or the first one.
+fn pointer_monitor(window: &gtk::Window, native: &x11::Window) -> Option<gdk::Monitor> {
+    let pointer = native.pointer().ok();
+    let monitors = gtk::prelude::WidgetExt::display(window).monitors();
+    let monitors: Vec<gdk::Monitor> = (0..monitors.n_items())
+        .filter_map(|i| monitors.item(i).and_downcast::<gdk::Monitor>())
+        .collect();
+    monitors
+        .iter()
+        .find(|monitor| {
+            let g = monitor.geometry();
+            let scale = monitor.scale_factor().max(1);
+            pointer.is_some_and(|(x, y)| {
+                x >= g.x() * scale
+                    && x < (g.x() + g.width()) * scale
+                    && y >= g.y() * scale
+                    && y < (g.y() + g.height()) * scale
+            })
+        })
+        .or_else(|| monitors.first())
+        .cloned()
+}
+
+/// The display, when it can show a transparent overlay (Layer Shell on Wayland, a compositor on X11).
+fn overlay_display() -> Result<(gdk::Display, bool), String> {
     let display = gdk::Display::default().ok_or("no display")?;
     let is_x11 = display.is::<gdk4_x11::X11Display>();
     if !is_x11 && !gtk_layer_shell::is_supported() {
@@ -108,6 +118,32 @@ fn create() -> Result<Rc<RefCell<Inner>>, String> {
             "The recording overlay isn't shown: it needs a compositor for transparency.".into(),
         );
     }
+    Ok((display, is_x11))
+}
+
+/// Native policy for an overlay surface: no input (clicks go through), and on X11 never focused or managed.
+fn realize_overlay(window: &gtk::Window, is_x11: bool) -> Result<Option<x11::Window>, String> {
+    // Apply native policy before mapping; present() would request focus.
+    gtk::prelude::WidgetExt::realize(window);
+    let surface = window
+        .surface()
+        .ok_or("could not create the native overlay surface")?;
+    surface.set_input_region(Some(&cairo::Region::create()));
+    if !is_x11 {
+        return Ok(None);
+    }
+    let xid = surface
+        .downcast_ref::<gdk4_x11::X11Surface>()
+        .ok_or("could not access the X11 overlay surface")?
+        .xid();
+    Ok(Some(
+        x11::Window::new(u32::try_from(xid).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?,
+    ))
+}
+
+fn create() -> Result<Rc<RefCell<Inner>>, String> {
+    let (display, is_x11) = overlay_display()?;
     let window = gtk::Window::builder()
         .title("wisprcheap overlay")
         .decorated(false)
@@ -118,7 +154,9 @@ fn create() -> Result<Rc<RefCell<Inner>>, String> {
         .build();
     window.add_css_class("wisprcheap-overlay");
     let css = gtk::CssProvider::new();
-    css.load_from_data("window.wisprcheap-overlay { background: transparent; box-shadow: none; }");
+    css.load_from_string(
+        "window.wisprcheap-overlay { background: transparent; box-shadow: none; }",
+    );
     gtk::style_context_add_provider_for_display(
         &display,
         &css,
@@ -137,24 +175,7 @@ fn create() -> Result<Rc<RefCell<Inner>>, String> {
     area.set_content_height(CANVAS_H as i32);
     area.set_can_target(false);
     window.set_child(Some(&area));
-    // Apply native policy before mapping; present() would request focus.
-    gtk::prelude::WidgetExt::realize(&window);
-    let surface = window
-        .surface()
-        .ok_or("could not create the native overlay surface")?;
-    surface.set_input_region(Some(&cairo::Region::create()));
-    let native = if is_x11 {
-        let xid = surface
-            .downcast_ref::<gdk4_x11::X11Surface>()
-            .ok_or("could not access the X11 overlay surface")?
-            .xid();
-        Some(
-            x11::Window::new(u32::try_from(xid).map_err(|e| e.to_string())?)
-                .map_err(|e| e.to_string())?,
-        )
-    } else {
-        None
-    };
+    let native = realize_overlay(&window, is_x11)?;
     let inner = Rc::new(RefCell::new(Inner {
         window: window.clone(),
         area: area.clone(),
@@ -200,7 +221,7 @@ fn wake(inner: &Rc<RefCell<Inner>>) {
         state.active = true;
         state.window.clone()
     };
-    window.show();
+    window.set_visible(true);
     let weak = Rc::downgrade(inner);
     glib::timeout_add_local(FRAME, move || {
         let Some(inner) = weak.upgrade() else {
@@ -218,7 +239,353 @@ fn wake(inner: &Rc<RefCell<Inner>>) {
         state.active = false;
         let window = state.window.clone();
         drop(state);
-        window.hide();
+        window.set_visible(false);
+        glib::ControlFlow::Break
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Edge glow
+// ---------------------------------------------------------------------------
+
+/// Draws `GlowFrame`s with GSK gradients (on the GPU), sized by its window.
+mod glow_area {
+    use super::super::glow::GlowFrame;
+    use gtk::glib;
+    use gtk::prelude::*;
+    use gtk::subclass::prelude::*;
+    use std::cell::Cell;
+
+    #[derive(Default)]
+    pub struct Imp {
+        pub frame: Cell<Option<GlowFrame>>,
+    }
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for Imp {
+        const NAME: &'static str = "WisprcheapGlowArea";
+        type Type = super::GlowArea;
+        type ParentType = gtk::Widget;
+    }
+
+    impl ObjectImpl for Imp {}
+
+    impl WidgetImpl for Imp {
+        fn snapshot(&self, snapshot: &gtk::Snapshot) {
+            if let Some(frame) = self.frame.get() {
+                let widget = self.obj();
+                super::draw_glow(
+                    snapshot,
+                    WidgetExt::width(&*widget) as f32,
+                    WidgetExt::height(&*widget) as f32,
+                    &frame,
+                );
+            }
+        }
+    }
+}
+
+glib::wrapper! {
+    pub struct GlowArea(ObjectSubclass<glow_area::Imp>)
+        @extends gtk::Widget,
+        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
+}
+
+impl GlowArea {
+    fn new() -> Self {
+        glib::Object::new()
+    }
+
+    fn set_frame(&self, frame: GlowFrame) {
+        use gtk::subclass::prelude::ObjectSubclassIsExt;
+        self.imp().frame.set(Some(frame));
+        self.queue_draw();
+    }
+}
+
+/// The wave on the bottom edge at `x`: long, gentle swells travelling to the right as `t` advances.
+fn wave(x: f32, t: f32, amplitude: f32) -> f32 {
+    amplitude
+        * (0.6 * (x / 95.0 - 1.6 * t).sin()
+            + 0.28 * (x / 48.0 - 2.3 * t + 1.7).sin()
+            + 0.12 * (x / 160.0 - 0.9 * t + 4.1).sin())
+}
+
+/// The glow's shape: one continuous band along the bottom edge and up both side edges, its inner outline
+/// following the wave along the bottom, curving around the corners, and tapering to nothing as it climbs.
+/// `scale` makes the band thinner (and the sides shorter), for the brighter layers near the edges.
+fn glow_outline(
+    w: f32,
+    h: f32,
+    t: f32,
+    base: f32,
+    amplitude: f32,
+    reach: f32,
+    scale: f32,
+) -> gsk::Path {
+    let band = base * scale;
+    let radius = band * 1.6;
+    let reach = reach * (0.55 + 0.45 * scale.min(1.0));
+    let corner = band + radius;
+    // the wave flattens out near the corners, so the band meets the sides at its base thickness
+    let bottom = |x: f32| {
+        let ramp = ((x.min(w - x) - corner) / (3.0 * corner)).clamp(0.0, 1.0);
+        let ramp = ramp * ramp * (3.0 - 2.0 * ramp);
+        h - band - scale * wave(x, t, amplitude) * ramp
+    };
+    // side thickness at height `u` above the corner's curve: full, easing to nothing at the top
+    let side = |u: f32| {
+        let p = (u / (reach - corner).max(1.0)).clamp(0.0, 1.0);
+        band * (1.0 - p * p * (3.0 - 2.0 * p))
+    };
+    let path = gsk::PathBuilder::new();
+    path.move_to(-20.0, h + 20.0);
+    path.line_to(-20.0, h - reach - 20.0);
+    path.line_to(0.0, h - reach);
+    // down the left side
+    let steps = 40;
+    for i in 0..=steps {
+        let u = (reach - corner) * (1.0 - i as f32 / steps as f32);
+        path.line_to(side(u), h - corner - u);
+    }
+    // left inner corner: a quarter circle from the side into the bottom band
+    for i in 1..=12 {
+        let a = std::f32::consts::FRAC_PI_2 * i as f32 / 12.0;
+        path.line_to(corner - radius * a.cos(), h - corner + radius * a.sin());
+    }
+    // along the bottom
+    let mut x = corner;
+    while x < w - corner {
+        path.line_to(x, bottom(x));
+        x += 5.0;
+    }
+    // right inner corner, then up the right side
+    for i in 0..=12 {
+        let a = std::f32::consts::FRAC_PI_2 * i as f32 / 12.0;
+        path.line_to(w - corner + radius * a.sin(), h - corner + radius * a.cos());
+    }
+    for i in 0..=steps {
+        let u = (reach - corner) * i as f32 / steps as f32;
+        path.line_to(w - side(u), h - corner - u);
+    }
+    path.line_to(w, h - reach);
+    path.line_to(w + 20.0, h - reach - 20.0);
+    path.line_to(w + 20.0, h + 20.0);
+    path.close();
+    path.to_path()
+}
+
+/// One frame of the glow over a `w` x `h` window: one continuous band of light along the bottom and up the
+/// sides, with a wave on top. It's drawn three times, from wide and faint to thin and bright, so it's
+/// brightest right at the window's edges and fades inward, and each layer is blurred on the GPU.
+fn draw_glow(s: &gtk::Snapshot, w: f32, h: f32, f: &GlowFrame) {
+    if w <= 0.0 || h <= 0.0 || f.opacity <= 0.0 {
+        return;
+    }
+    let [c1, c2, c3] = f.colors;
+    let (t, swell) = (f.time, f.swell);
+    s.push_opacity(f.opacity as f64);
+
+    // Thickness of the band and height of its wave: low, higher with the voice.
+    let base = 10.0 + 10.0 * swell;
+    let amplitude = 4.0 + 7.0 * swell;
+    let reach = (h * (0.3 + 0.08 * swell)).min(h);
+    // everything the outlines can cover (they never climb above `reach`)
+    let bounds = graphene::Rect::new(-30.0, h - reach - 30.0, w + 60.0, reach + 60.0);
+    // (thickness, color, opacity, blur)
+    for (scale, color, alpha, blur) in [
+        (1.6, c2, 0.22, 12.0),
+        (0.75, c1, 0.25, 6.0),
+        (0.25, c3, 0.5, 2.0),
+    ] {
+        let outline = glow_outline(w, h, t, base, amplitude, reach, scale);
+        s.push_blur(blur);
+        s.push_fill(&outline, gsk::FillRule::Winding);
+        s.append_color(&gdk::RGBA::new(color.r, color.g, color.b, alpha), &bounds);
+        s.pop();
+        s.pop();
+    }
+    s.pop();
+}
+
+/// Where the glow is drawn.
+#[derive(Debug, Clone, PartialEq)]
+enum Placement {
+    /// Over Hyprland's active window.
+    Window(hyprland::ActiveWindow),
+    /// The whole output (no focused window, another compositor, or X11).
+    Output,
+}
+
+/// How often the glow follows the focus while it's on screen.
+const FOLLOW_FRAMES: u32 = 15;
+
+struct Glow {
+    window: gtk::Window,
+    area: GlowArea,
+    x11: Option<x11::Window>,
+    scene: GlowScene,
+    placement: Option<Placement>,
+    active: bool,
+    frames: u32,
+}
+
+impl Glow {
+    /// Wayland: over Hyprland's active window when there is one, else over the whole output (the compositor
+    /// picks it). X11: the monitor under the pointer.
+    fn place(&mut self) {
+        if let Some(native) = &self.x11 {
+            let Some(monitor) = pointer_monitor(&self.window, native) else {
+                return;
+            };
+            let g = monitor.geometry();
+            let scale = monitor.scale_factor().max(1);
+            if let Err(e) = native.place(
+                g.x() * scale,
+                g.y() * scale,
+                (g.width() * scale) as u32,
+                (g.height() * scale) as u32,
+            ) {
+                crate::warn!("[overlay] Could not position the X11 edge glow: {e}");
+            }
+            return;
+        }
+        let placement = hyprland::active_window()
+            .map(Placement::Window)
+            .unwrap_or(Placement::Output);
+        if self.placement.as_ref() == Some(&placement) {
+            return;
+        }
+        // A mapped GTK window keeps its size: remap it to apply a new one.
+        let mapped = self.window.is_mapped();
+        if mapped {
+            self.window.set_visible(false);
+        }
+        match &placement {
+            Placement::Window(active) => {
+                let monitor = monitor_named(&self.window, &active.monitor);
+                self.window.set_monitor(monitor.as_ref());
+                self.window.set_anchor(Edge::Top, true);
+                self.window.set_anchor(Edge::Left, true);
+                self.window.set_anchor(Edge::Bottom, false);
+                self.window.set_anchor(Edge::Right, false);
+                self.window.set_margin(Edge::Top, active.y);
+                self.window.set_margin(Edge::Left, active.x);
+                self.window.set_default_size(active.width, active.height);
+            }
+            Placement::Output => {
+                self.window.set_monitor(None);
+                for edge in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right] {
+                    self.window.set_anchor(edge, true);
+                    self.window.set_margin(edge, 0);
+                }
+            }
+        }
+        self.placement = Some(placement);
+        if mapped {
+            self.window.set_visible(true);
+        }
+    }
+
+    fn render(&self) {
+        self.area.set_frame(self.scene.frame());
+    }
+}
+
+/// The GDK monitor of an output name (`eDP-1`...).
+fn monitor_named(window: &gtk::Window, name: &str) -> Option<gdk::Monitor> {
+    let monitors = gtk::prelude::WidgetExt::display(window).monitors();
+    (0..monitors.n_items())
+        .filter_map(|i| monitors.item(i).and_downcast::<gdk::Monitor>())
+        .find(|m| m.connector().is_some_and(|c| c == name))
+}
+
+fn create_glow() -> Result<Rc<RefCell<Glow>>, String> {
+    let (display, is_x11) = overlay_display()?;
+    let window = gtk::Window::builder()
+        .title("wisprcheap edge glow")
+        .decorated(false)
+        // Resizable, so it takes the size it's given instead of its (empty) natural size.
+        .focusable(false)
+        .build();
+    window.add_css_class("wisprcheap-glow");
+    let css = gtk::CssProvider::new();
+    css.load_from_string("window.wisprcheap-glow { background: transparent; box-shadow: none; }");
+    gtk::style_context_add_provider_for_display(
+        &display,
+        &css,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+    if !is_x11 {
+        window.init_layer_shell();
+        window.set_namespace(Some("wisprcheap-edge-glow"));
+        window.set_layer(Layer::Overlay);
+        // Margins count from the output's corner, not from panels and bars.
+        window.set_exclusive_zone(-1);
+        window.set_keyboard_mode(KeyboardMode::None);
+    }
+    let area = GlowArea::new();
+    area.set_hexpand(true);
+    area.set_vexpand(true);
+    area.set_can_target(false);
+    window.set_child(Some(&area));
+    let native = realize_overlay(&window, is_x11)?;
+    let glow = Rc::new(RefCell::new(Glow {
+        window: window.clone(),
+        area,
+        x11: native,
+        scene: GlowScene::new(),
+        placement: None,
+        active: false,
+        frames: 0,
+    }));
+    window.connect_map(move |window| {
+        if let Some(surface) = window.surface() {
+            surface.set_input_region(Some(&cairo::Region::create()));
+        }
+    });
+    Ok(glow)
+}
+
+fn wake_glow(glow: &Rc<RefCell<Glow>>) {
+    let window = {
+        let Ok(mut state) = glow.try_borrow_mut() else {
+            return;
+        };
+        let now = Instant::now();
+        if state.active || !state.scene.on_screen(now) {
+            return;
+        }
+        state.place();
+        state.scene.tick(now, crate::recorder::take_level());
+        state.render();
+        state.active = true;
+        state.frames = 0;
+        state.window.clone()
+    };
+    window.set_visible(true);
+    let weak = Rc::downgrade(glow);
+    glib::timeout_add_local(FRAME, move || {
+        let Some(glow) = weak.upgrade() else {
+            return glib::ControlFlow::Break;
+        };
+        let Ok(mut state) = glow.try_borrow_mut() else {
+            return glib::ControlFlow::Continue;
+        };
+        let now = Instant::now();
+        state.scene.tick(now, crate::recorder::take_level());
+        state.render();
+        if state.scene.on_screen(now) {
+            state.frames += 1;
+            if state.frames % FOLLOW_FRAMES == 0 {
+                state.place();
+            }
+            return glib::ControlFlow::Continue;
+        }
+        state.active = false;
+        let window = state.window.clone();
+        drop(state);
+        window.set_visible(false);
         glib::ControlFlow::Break
     });
 }
@@ -227,6 +594,8 @@ fn wake(inner: &Rc<RefCell<Inner>>) {
 pub struct Overlay {
     inner: Option<Rc<RefCell<Inner>>>,
     unavailable: bool,
+    glow: Option<Rc<RefCell<Glow>>>,
+    glow_unavailable: bool,
 }
 
 impl Overlay {
@@ -234,7 +603,41 @@ impl Overlay {
         Self::default()
     }
 
+    /// Show the configured style; the other one gets a disabled status, so it hides (or stays hidden).
     pub fn set_status(&mut self, status: OverlayStatus) {
+        let glow = status.enabled && status.style == OverlayStyle::EdgeGlow && self.glow_ready();
+        let off = OverlayStatus {
+            enabled: false,
+            ..status
+        };
+        self.set_glow_status(if glow { status } else { off });
+        self.set_pill_status(if glow { off } else { status });
+    }
+
+    /// Create the edge glow on first use. If it can't be shown, the pill is used instead.
+    fn glow_ready(&mut self) -> bool {
+        if self.glow.is_none() && !self.glow_unavailable {
+            match create_glow() {
+                Ok(glow) => self.glow = Some(glow),
+                Err(why) => {
+                    self.glow_unavailable = true;
+                    crate::info!("[overlay] {why}");
+                }
+            }
+        }
+        self.glow.is_some()
+    }
+
+    fn set_glow_status(&mut self, status: OverlayStatus) {
+        if let Some(glow) = &self.glow {
+            if let Ok(mut state) = glow.try_borrow_mut() {
+                state.scene.set_status(status);
+            }
+            wake_glow(glow);
+        }
+    }
+
+    fn set_pill_status(&mut self, status: OverlayStatus) {
         if self.inner.is_none() {
             if !status.enabled || self.unavailable {
                 return;
@@ -256,6 +659,7 @@ impl Overlay {
         }
     }
 
+    /// The style that isn't shown has a disabled status, so only the shown one reacts.
     pub fn feedback(&mut self, feedback: Feedback) {
         if let Some(inner) = &self.inner {
             if let Ok(mut state) = inner.try_borrow_mut() {
@@ -263,11 +667,22 @@ impl Overlay {
             }
             wake(inner);
         }
+        if let Some(glow) = &self.glow {
+            if let Ok(mut state) = glow.try_borrow_mut() {
+                state.scene.feedback(feedback, Instant::now());
+            }
+            wake_glow(glow);
+        }
     }
 
     pub fn destroy(&mut self) {
         if let Some(inner) = self.inner.take()
             && let Ok(state) = inner.try_borrow()
+        {
+            state.window.destroy();
+        }
+        if let Some(glow) = self.glow.take()
+            && let Ok(state) = glow.try_borrow()
         {
             state.window.destroy();
         }
@@ -281,6 +696,60 @@ mod tests {
     use crate::overlay::Recording;
     use std::cell::Cell;
     use std::process::Command;
+
+    /// Render glow frames offscreen (the real drawing code, through GSK's Cairo fallback) to PNG files in
+    /// WISPRCHEAP_GLOW_PNG_DIR, to look at the glow without recording: quiet, then speaking, a moment apart.
+    #[test]
+    #[ignore = "needs a display; writes PNGs to WISPRCHEAP_GLOW_PNG_DIR"]
+    fn render_glow_frames() {
+        use super::super::glow::GlowLook;
+        gtk::init().unwrap();
+        let dir = std::path::PathBuf::from(
+            std::env::var_os("WISPRCHEAP_GLOW_PNG_DIR").expect("set WISPRCHEAP_GLOW_PNG_DIR"),
+        );
+        std::fs::create_dir_all(&dir).unwrap();
+        let (w, h) = (1000.0f32, 640.0f32);
+        let frames = [
+            ("quiet", 0.0, 0.0),
+            ("quiet-later", 0.0, 0.2),
+            ("speaking", 0.8, 1.0),
+            ("speaking-later", 0.8, 1.4),
+        ];
+        for (name, swell, time) in frames {
+            let snapshot = gtk::Snapshot::new();
+            snapshot.append_color(
+                &gdk::RGBA::new(0.11, 0.11, 0.14, 1.0),
+                &graphene::Rect::new(0.0, 0.0, w, h),
+            );
+            let frame = GlowFrame {
+                opacity: 1.0,
+                colors: GlowLook::Dictation.palette(),
+                time,
+                swell,
+            };
+            draw_glow(&snapshot, w, h, &frame);
+            let node = snapshot.to_node().unwrap();
+            let mut surface =
+                cairo::ImageSurface::create(cairo::Format::ARgb32, w as i32, h as i32).unwrap();
+            {
+                let cr = cairo::Context::new(&surface).unwrap();
+                node.draw(&cr);
+            }
+            surface.flush();
+            let stride = surface.stride() as usize;
+            let bytes = glib::Bytes::from(&*surface.data().unwrap());
+            let texture = gdk::MemoryTexture::new(
+                w as i32,
+                h as i32,
+                gdk::MemoryFormat::B8g8r8a8Premultiplied,
+                &bytes,
+                stride,
+            );
+            texture
+                .save_to_png(dir.join(format!("{name}.png")))
+                .unwrap();
+        }
+    }
 
     fn settle(ms: u64) {
         let context = glib::MainContext::default();
@@ -357,6 +826,7 @@ mod tests {
                 hands_free: false,
             }),
             busy: false,
+            style: Default::default(),
         };
         overlay.set_status(status);
         settle(400);
@@ -456,6 +926,7 @@ mod tests {
                 hands_free: false,
             }),
             busy: false,
+            style: Default::default(),
         };
         if std::env::var_os("WISPRCHEAP_OVERLAY_EXPECT_UNSUPPORTED").is_some() {
             assert!(!gtk_layer_shell::is_supported());

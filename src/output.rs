@@ -30,16 +30,23 @@ async fn wait_until(predicate: impl Fn() -> bool, timeout: Duration) -> bool {
     true
 }
 
-async fn inject(hotkey: &SharedHotkey, letter: Letter) {
+/// Ctrl+`letter` into the focused app, or Ctrl+Shift+`letter` when it's a terminal.
+async fn inject(hotkey: &SharedHotkey, letter: Letter, terminal_apps: &[String]) {
     hotkey.lock().unwrap().mark_injection(200);
-    let _ = tokio::task::spawn_blocking(move || tap_ctrl(letter)).await;
+    let extra = terminal_apps.to_vec();
+    let _ = tokio::task::spawn_blocking(move || {
+        let terminal = crate::focus::terminal_focused(&extra);
+        tap_ctrl(letter, terminal)
+    })
+    .await;
 }
 
 fn hotkey_released(hotkey: &SharedHotkey) -> impl Fn() -> bool + '_ {
     move || !hotkey.lock().unwrap().is_any_hotkey_key_down()
 }
 
-/// Copy the text to the clipboard and paste it into the focused app with a simulated Ctrl+V.
+/// Copy the text to the clipboard and paste it into the focused app with a simulated Ctrl+V
+/// (Ctrl+Shift+V in a terminal).
 pub async fn deliver(text: &str, opts: &OutputConfig, hotkey: &SharedHotkey) -> Result<Delivered> {
     let previous = if opts.paste && opts.restore_clipboard {
         clipboard::read().await.ok()
@@ -58,7 +65,7 @@ pub async fn deliver(text: &str, opts: &OutputConfig, hotkey: &SharedHotkey) -> 
     }
 
     sleep(Duration::from_millis(30)).await; // let the clipboard settle
-    inject(hotkey, Letter::V).await;
+    inject(hotkey, Letter::V, &opts.terminal_apps).await;
 
     if let Some(previous) = previous {
         sleep(Duration::from_millis(300)).await; // the target app reads the clipboard asynchronously
@@ -74,9 +81,10 @@ pub struct Selection {
     pub previous: Option<String>,
 }
 
-/// Copy the focused app's selection with a simulated Ctrl+C, once the hotkey is released.
+/// Copy the focused app's selection with a simulated Ctrl+C (Ctrl+Shift+C in a terminal), once the hotkey
+/// is released.
 /// A marker is put on the clipboard first: if it's still there afterwards, nothing was selected.
-pub async fn capture_selection(hotkey: &SharedHotkey) -> Selection {
+pub async fn capture_selection(hotkey: &SharedHotkey, terminal_apps: &[String]) -> Selection {
     let previous = clipboard::read().await.ok();
     if injection_disabled() {
         return Selection {
@@ -98,7 +106,7 @@ pub async fn capture_selection(hotkey: &SharedHotkey) -> Selection {
     let marker = format!("\u{2063}wisprcheap-selection-{millis}");
     let _ = clipboard::write(marker.clone()).await;
     sleep(Duration::from_millis(30)).await;
-    inject(hotkey, Letter::C).await;
+    inject(hotkey, Letter::C, terminal_apps).await;
 
     let deadline = Instant::now() + Duration::from_millis(700);
     while Instant::now() < deadline {
