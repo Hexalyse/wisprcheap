@@ -140,9 +140,9 @@ It never takes the focus and clicks go through it. Turn it off with `overlay.ena
 
 ### Edge glow (Linux)
 
-`overlay.style: edgeGlow` replaces the pill with a soft blue glow rising from the bottom of the **active window** and
-climbing its side edges, like Superwhisper's. Small waves of light drift slowly to the right along the bottom edge;
-when you speak they speed up and rise, and they settle back in each pause. It turns violet for a command, breathes while the audio is processed, then briefly flashes cyan (pasted),
+`overlay.style: edgeGlow` replaces the pill with a soft blue glow along the bottom of the **active window** that
+continues up its side edges, like Superwhisper's: one continuous band, brightest at the edges. Its top edge is a wave
+that drifts slowly to the right; when you speak it speeds up and rises, and it settles back in each pause. It turns violet for a command, breathes while the audio is processed, then briefly flashes cyan (pasted),
 light blue (copied), grey (nothing heard) or red (error) before it fades out.
 
 ```yaml
