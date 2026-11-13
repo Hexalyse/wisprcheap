@@ -101,6 +101,13 @@ fields![
     ),
     (
         "General",
+        "overlay.style",
+        "Overlay style",
+        Text,
+        "pill (bottom of the screen) or edgeGlow (glow at the bottom of the active window, Linux)"
+    ),
+    (
+        "General",
         "sounds.enabled",
         "Play sound cues",
         Bool,

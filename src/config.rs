@@ -350,12 +350,29 @@ impl Default for SoundsConfig {
 pub struct OverlayConfig {
     /// Show a small indicator at the bottom center of the screen while recording and processing.
     pub enabled: bool,
+    /// What the indicator looks like.
+    pub style: OverlayStyle,
 }
 
 impl Default for OverlayConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            style: OverlayStyle::Pill,
+        }
     }
+}
+
+/// `overlay.style`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OverlayStyle {
+    /// A small pill at the bottom center of the screen, with a live waveform.
+    #[default]
+    Pill,
+    /// A blue glow at the bottom of the active window that follows the voice (Linux; the pill elsewhere).
+    #[serde(alias = "edge-glow", alias = "edgeglow")]
+    EdgeGlow,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

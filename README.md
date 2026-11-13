@@ -138,6 +138,23 @@ how it went: a check (pasted), a clipboard (only copied), a crossed-out micropho
 
 It never takes the focus and clicks go through it. Turn it off with `overlay.enabled: false`.
 
+### Edge glow (Linux)
+
+`overlay.style: edgeGlow` replaces the pill with a soft blue glow rising from the bottom of the **active window** and
+climbing its side edges, like Superwhisper's. Blobs of light drift along the bottom, and the glow reaches higher as
+you speak. It turns violet for a command, breathes while the audio is processed, then briefly flashes cyan (pasted),
+light blue (copied), grey (nothing heard) or red (error) before it fades out.
+
+```yaml
+overlay:
+  enabled: true
+  style: edgeGlow   # or pill (the default)
+```
+
+On Hyprland (Omarchy) it follows the focused window through Hyprland's IPC socket, including when the focus changes
+while you speak. With no focused window, on other Wayland compositors (Layer Shell, namespace `wisprcheap-edge-glow`)
+and on X11, it uses the bottom of the whole screen instead. It's drawn with GTK's GPU gradients. Windows keeps the pill.
+
 ## Translation mode
 
 List the pairs you want in `config.yaml`; they appear under **Translate dictation** in the tray:

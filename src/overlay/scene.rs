@@ -57,7 +57,7 @@ const ON_SURFACE_VARIANT: Color = Color::hex(0xC8C5D0);
 const WHITE: Color = Color::hex(0xFFFFFF);
 
 impl Feedback {
-    fn duration(self) -> Duration {
+    pub(super) fn duration(self) -> Duration {
         Duration::from_millis(match self {
             Feedback::Pasted => 700,
             Feedback::Copied => 1200,
@@ -185,7 +185,7 @@ fn approach_color(value: Color, target: Color, dt: f32, tau: f32) -> Color {
 }
 
 /// Microphone RMS (linear) to 0..1, like the Android app: -60 dBFS is silence, -10 dBFS is loud.
-fn loudness(rms: f32) -> f32 {
+pub(super) fn loudness(rms: f32) -> f32 {
     let db = 20.0 * rms.max(1e-6).log10();
     ((db + 60.0) / 50.0).clamp(0.0, 1.0)
 }
@@ -606,6 +606,7 @@ mod tests {
             enabled: true,
             recording,
             busy,
+            style: Default::default(),
         }
     }
 
@@ -693,6 +694,7 @@ mod tests {
             enabled: false,
             recording: dictation(),
             busy: true,
+            style: Default::default(),
         });
         scene.feedback(Feedback::Error, t0);
         assert!(!scene.on_screen(t0));

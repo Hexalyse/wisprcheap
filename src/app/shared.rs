@@ -203,6 +203,7 @@ impl Shared {
             let st = self.status.lock().unwrap();
             let overlay = OverlayStatus {
                 enabled: p.config.overlay.enabled,
+                style: p.config.overlay.style,
                 recording: st.recording.then_some(Recording {
                     mode: st.recording_mode,
                     hands_free,
