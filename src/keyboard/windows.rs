@@ -1,6 +1,7 @@
 //! Windows: WH_KEYBOARD_LL hook on a dedicated thread, SendInput for injection.
 
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
 use tokio::sync::mpsc::UnboundedSender;
@@ -24,6 +25,16 @@ use crate::hotkey::{KeyCode, key_code, keys};
 const INJECTED_MARKER: usize = 0x5752_4348; // "WRCH"
 
 static SENDER: OnceLock<UnboundedSender<KeyEvent>> = OnceLock::new();
+
+/// Escape is kept from the focused app while this is set (`capture_escape`, while recording).
+static CAPTURE_ESCAPE: AtomicBool = AtomicBool::new(false);
+/// An Escape press was swallowed: swallow its release too, even if the capture ended meanwhile.
+static ESCAPE_SWALLOWED: AtomicBool = AtomicBool::new(false);
+const VK_ESCAPE: u32 = 0x1B;
+
+pub fn capture_escape(on: bool) {
+    CAPTURE_ESCAPE.store(on, Ordering::Relaxed);
+}
 
 pub struct Hook {
     thread_id: u32,
@@ -90,6 +101,23 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                     code: vk_to_code(kb.vkCode, extended),
                     down,
                 });
+                // While recording, the Escape that cancels it doesn't reach the focused app.
+                if kb.vkCode == VK_ESCAPE {
+                    let swallow = if down {
+                        // (auto-repeat of a swallowed press is swallowed too, until it's released)
+                        let swallow = CAPTURE_ESCAPE.load(Ordering::Relaxed)
+                            || ESCAPE_SWALLOWED.load(Ordering::Relaxed);
+                        if swallow {
+                            ESCAPE_SWALLOWED.store(true, Ordering::Relaxed);
+                        }
+                        swallow
+                    } else {
+                        ESCAPE_SWALLOWED.swap(false, Ordering::Relaxed)
+                    };
+                    if swallow {
+                        return 1;
+                    }
+                }
             }
         }
     }

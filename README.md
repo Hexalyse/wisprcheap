@@ -184,7 +184,7 @@ unless `translation.model` is set (e.g. `gpt-6-sol` with `reasoningEffort: low` 
 | Press Alt while dictating with Ctrl+Win  | Switches that recording to command mode (quick rising arpeggio) |
 | Select a word, press Ctrl+Win+Shift      | Adds it to the dictionary (two high beeps; a low beep if it was already there) |
 | Ctrl+Win + another key (Left, D...)      | The recording is cancelled and the system shortcut works as usual |
-| Escape while recording                   | The recording is cancelled, however it was started (hands-free, Omarchy's keys). `hotkey.escapeCancels: false` turns it off |
+| Escape while recording                   | The recording is cancelled, however it was started (hands-free, Omarchy's keys), and the Escape doesn't reach the app (Windows; Hyprland with the [Omarchy integration](#omarchy)). `hotkey.escapeCancels: false` turns it off |
 | A single short tap                       | Low beep, nothing is sent                                      |
 | Transcription fails                      | Error buzz. The audio is kept in `recordings/` and can be retried from the tray |
 | Polish fails or times out                | The raw transcript is pasted instead                           |

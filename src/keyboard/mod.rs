@@ -63,6 +63,14 @@ pub fn tap_ctrl(letter: Letter, shift: bool) {
     }
 }
 
+/// While on, Escape is kept from the focused application (wisprcheap still sees it): set while recording,
+/// so the Escape that cancels a recording doesn't also close a dialog or leave a mode in the app.
+/// Windows: the keyboard hook swallows it. Linux: Hyprland's `wisprcheap_escape` bind, defined by the
+/// Omarchy integration, is enabled; elsewhere the key can't be held back, and still reaches the app.
+pub fn capture_escape(on: bool) {
+    imp::capture_escape(on);
+}
+
 /// `wisprcheap wayland`: the keyboard access status and the one-time setup. Returns (report, all good).
 pub fn setup_report() -> (String, bool) {
     #[cfg(target_os = "linux")]

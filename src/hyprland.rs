@@ -84,6 +84,17 @@ pub fn active_window() -> Option<ActiveWindow> {
     parse(&active, &monitors)
 }
 
+/// Enable or disable the Escape bind of the Omarchy integration (`wisprcheap_escape`, defined in the
+/// `shortcuts.lua` that Omarchy loads while wisprcheap is its dictation backend): enabled, Escape cancels
+/// the recording without reaching the focused app. Does nothing without Hyprland or that bind.
+pub fn set_escape_bind(enabled: bool) {
+    if socket().is_some() {
+        let _ = request(&format!(
+            "eval if wisprcheap_escape then wisprcheap_escape:set_enabled({enabled}) end"
+        ));
+    }
+}
+
 /// The focused window's class and tags, or None (no window focused, not Hyprland, or no answer).
 pub fn focused() -> Option<Focused> {
     parse_focused(&request("j/activewindow")?)

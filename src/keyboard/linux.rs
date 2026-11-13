@@ -148,6 +148,10 @@ fn capitalize(s: &str) -> String {
     }
 }
 
+pub fn capture_escape(on: bool) {
+    crate::hyprland::set_escape_bind(on);
+}
+
 pub fn tap_ctrl(letter: Letter, shift: bool) {
     match INJECTOR.get() {
         Some(Some(injector)) => {

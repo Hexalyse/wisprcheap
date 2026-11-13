@@ -225,6 +225,7 @@ pub async fn run(
         app_tx,
         stopping: false,
         start_after_stop: None,
+        escape_captured: false,
         reload_pending: false,
         reload_gen: 0,
         max_gen: 0,
@@ -235,6 +236,8 @@ pub async fn run(
     };
     actor.watch_config_files();
     actor.print_banner(&loaded);
+    // A previous instance that crashed while recording may have left Escape captured.
+    tokio::task::block_in_place(|| crate::keyboard::capture_escape(false));
     actor.ready = true;
     actor.shared.update_status();
 
@@ -250,6 +253,8 @@ struct Actor {
     recorder: Recorder,
     stopping: bool,
     start_after_stop: Option<Mode>,
+    /// Escape is captured (kept from the focused app) while recording.
+    escape_captured: bool,
     reload_pending: bool,
     reload_gen: u64,
     max_gen: u64,
@@ -338,6 +343,19 @@ impl Actor {
             AppMsg::Quit => self.quit().await,
             AppMsg::Restart => self.restart().await,
             AppMsg::SyncStatus => self.shared.refresh_tray(),
+        }
+        self.sync_escape_capture();
+    }
+
+    /// Capture Escape exactly while a recording is in progress (and `hotkey.escapeCancels`), so the Escape
+    /// that cancels it doesn't also reach the focused app.
+    fn sync_escape_capture(&mut self) {
+        let wanted = self.recorder.is_recording()
+            && !self.stopping
+            && self.shared.pipeline().config.hotkey.escape_cancels;
+        if wanted != self.escape_captured {
+            self.escape_captured = wanted;
+            tokio::task::block_in_place(|| crate::keyboard::capture_escape(wanted));
         }
     }
 
@@ -773,7 +791,8 @@ impl Actor {
     }
 
     /// Escape cancels a recording in progress (unless the hotkey already did: it cancels on any other key
-    /// while held). The key still reaches the focused app: it's observed, never consumed.
+    /// while held). While recording, Escape is captured so it doesn't also reach the focused app (see
+    /// `sync_escape_capture`).
     fn escape_pressed(&mut self) {
         let recording = self.recorder.is_recording() && !self.stopping;
         if recording && self.shared.pipeline().config.hotkey.escape_cancels {
@@ -989,6 +1008,10 @@ impl Actor {
     async fn teardown(&mut self) {
         if let Some(hook) = self.hook.take() {
             hook.stop();
+        }
+        if self.escape_captured {
+            self.escape_captured = false;
+            tokio::task::block_in_place(|| crate::keyboard::capture_escape(false));
         }
         self.max_gen += 1;
         self.reload_gen += 1;

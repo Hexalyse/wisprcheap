@@ -40,12 +40,21 @@ EOF
 fi
 
 # Desktop integration Omarchy loads while wisprcheap is the backend: the glow and the pill animate
-# themselves, so Hyprland's layer fade must not hold them back.
+# themselves, so Hyprland's layer fade must not hold them back; and Escape cancels a recording without
+# reaching the focused app.
 mkdir -p "$config_home/wisprcheap"
 cat > "$config_home/wisprcheap/shortcuts.lua" <<'EOF'
 -- Written by omarchy-install-dictation-wisprcheap; loaded by Omarchy while WisprCheap is the dictation backend.
+
 -- The recording overlays animate themselves: Hyprland's layer animations would hold them back.
 hl.layer_rule({ match = { namespace = "^wisprcheap-(overlay|edge-glow)$" }, no_anim = true, animation = "none" })
+
+-- Escape cancels a recording without reaching the focused app. WisprCheap enables this bind only while it
+-- records (over Hyprland's socket); if it isn't running anymore (a crash), the bind turns itself off.
+wisprcheap_escape = hl.bind("Escape", hl.dsp.exec_cmd(
+  [[pgrep -x wisprcheap >/dev/null && wisprcheap record cancel || hyprctl eval 'if wisprcheap_escape then wisprcheap_escape:set_enabled(false) end']]
+), { description = "WisprCheap: cancel the recording" })
+wisprcheap_escape:set_enabled(false)
 EOF
 
 # Start at login (Omarchy runs XDG autostart entries), and now.
