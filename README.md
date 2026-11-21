@@ -138,7 +138,7 @@ how it went: a check (pasted), a clipboard (only copied), a crossed-out micropho
 
 It never takes the focus and clicks go through it. Turn it off with `overlay.enabled: false`.
 
-### Edge glow (Linux)
+### Edge glow
 
 `overlay.style: edgeGlow` replaces the pill with a soft blue glow along the bottom of the **active window** that
 continues up its side edges, like Superwhisper's: one continuous band, brightest at the edges. Its top edge is a wave
@@ -154,8 +154,15 @@ overlay:
 On Hyprland (Omarchy) it follows the focused window through Hyprland's IPC socket, including when the focus changes
 while you speak. With no focused window, on other Wayland compositors (Layer Shell, namespace `wisprcheap-edge-glow`)
 and on X11, it uses the bottom of the whole screen instead. It's drawn and blurred by GTK on the GPU (GTK 4.14 or
-newer). Windows keeps the pill. To look at it without recording:
+newer). To look at it without recording:
 `WISPRCHEAP_GLOW_PNG_DIR=/tmp/glow cargo test --lib render_glow_frames -- --ignored` writes a few frames as PNG.
+
+On Windows it frames the focused window (its visible edges, following Windows 11's rounded corners), and follows it
+when it moves or the focus changes while you speak; on the desktop or the taskbar it uses the bottom of the screen
+above the taskbar. It's drawn in software at the monitor's resolution, only along the edges it lights.
+`cargo test --lib glow_previews -- --ignored` writes previews to `target/overlay-preview`.
+
+The style can also be picked from the desktop companion's settings (**General → Overlay style**).
 
 ## Translation mode
 

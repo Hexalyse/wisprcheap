@@ -377,7 +377,7 @@ pub enum OverlayStyle {
     /// A small pill at the bottom center of the screen, with a live waveform.
     #[default]
     Pill,
-    /// A blue glow at the bottom of the active window that follows the voice (Linux; the pill elsewhere).
+    /// A blue glow at the bottom of the active window that follows the voice.
     #[serde(alias = "edge-glow", alias = "edgeglow")]
     EdgeGlow,
 }

@@ -14,7 +14,7 @@ use iced::widget::{
 use iced::{Element, Length, Subscription, Task, Theme, window};
 use serde_json::{Value, json};
 use wisprcheap::companion::{
-    self, Activity, ActivityScope, Change, ConfigDocument, FieldKind, Reply, Request,
+    self, Activity, ActivityScope, Change, Choice, ConfigDocument, FieldKind, Reply, Request,
     RuntimeStatus, SETTINGS, SettingSpec, StatRow,
 };
 use wisprcheap::config::ConfigArgs;
@@ -1226,6 +1226,18 @@ impl App {
                 .label("Enabled")
                 .on_toggle(move |v| Message::Bool(path.into(), v))
                 .into(),
+            // a value from the list (else, like a ${VAR} reference, it stays editable as text)
+            FieldKind::Choice(choices)
+                if value.trim().is_empty() || Choice::find(choices, value).is_some() =>
+            {
+                pick_list(choices, Choice::find(choices, value), move |c: Choice| {
+                    Message::Field(path.into(), c.value.into())
+                })
+                .placeholder("Use default")
+                .padding(10)
+                .width(Length::Fill)
+                .into()
+            }
             FieldKind::LongText => {
                 if let Some(content) = self.editors.get(path) {
                     text_editor(content)

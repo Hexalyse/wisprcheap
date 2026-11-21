@@ -5,10 +5,12 @@
 //! Drawn in software (`paint`), animated by `scene`, and shown by a layered window on Windows, a GTK4
 //! surface with native X11 policy, or GTK4 Layer Shell on supported Wayland compositors.
 //!
-//! On Linux, `overlay.style: edgeGlow` shows a glow at the bottom of the active window instead (`glow`).
+//! `overlay.style: edgeGlow` shows a glow at the bottom of the active window instead (`glow`): drawn with GSK
+//! on Linux, and in software (`glow_paint`) on Windows.
 
-#[cfg(target_os = "linux")]
 mod glow;
+#[cfg(windows)]
+mod glow_paint;
 mod meter;
 mod paint;
 mod scene;

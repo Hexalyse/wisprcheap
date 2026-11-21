@@ -1,7 +1,7 @@
 //! GTK4 surface host for the existing software-rendered overlay, and for the edge glow.
 //! Wayland uses Layer Shell; X11 positioning/stacking uses a small native adapter.
 
-use super::glow::{GlowFrame, GlowScene};
+use super::glow::{GlowFrame, GlowScene, LAYERS, shape, wave};
 use super::paint::Canvas;
 use super::scene::{CANVAS_H, CANVAS_W, Scene};
 use super::{Feedback, OverlayStatus, OverlayStyle, x11};
@@ -303,14 +303,6 @@ impl GlowArea {
     }
 }
 
-/// The wave on the bottom edge at `x`: long, gentle swells travelling to the right as `t` advances.
-fn wave(x: f32, t: f32, amplitude: f32) -> f32 {
-    amplitude
-        * (0.6 * (x / 95.0 - 1.6 * t).sin()
-            + 0.28 * (x / 48.0 - 2.3 * t + 1.7).sin()
-            + 0.12 * (x / 160.0 - 0.9 * t + 4.1).sin())
-}
-
 /// The glow's shape: one continuous band along the bottom edge and up both side edges, its inner outline
 /// following the wave along the bottom, curving around the corners, and tapering to nothing as it climbs.
 /// `scale` makes the band thinner (and the sides shorter), for the brighter layers near the edges.
@@ -382,24 +374,16 @@ fn draw_glow(s: &gtk::Snapshot, w: f32, h: f32, f: &GlowFrame) {
     if w <= 0.0 || h <= 0.0 || f.opacity <= 0.0 {
         return;
     }
-    let [c1, c2, c3] = f.colors;
-    let (t, swell) = (f.time, f.swell);
+    let t = f.time;
     s.push_opacity(f.opacity as f64);
 
-    // Thickness of the band and height of its wave: low, higher with the voice.
-    let base = 10.0 + 10.0 * swell;
-    let amplitude = 4.0 + 7.0 * swell;
-    let reach = (h * (0.3 + 0.08 * swell)).min(h);
+    let (base, amplitude, reach) = shape(f.swell, h);
     // everything the outlines can cover (they never climb above `reach`)
     let bounds = graphene::Rect::new(-30.0, h - reach - 30.0, w + 60.0, reach + 60.0);
-    // (thickness, color, opacity, blur)
-    for (scale, color, alpha, blur) in [
-        (1.6, c2, 0.22, 12.0),
-        (0.75, c1, 0.25, 6.0),
-        (0.25, c3, 0.5, 2.0),
-    ] {
+    for (scale, color, alpha, blur) in LAYERS {
+        let color = f.colors[color];
         let outline = glow_outline(w, h, t, base, amplitude, reach, scale);
-        s.push_blur(blur);
+        s.push_blur(blur.into());
         s.push_fill(&outline, gsk::FillRule::Winding);
         s.append_color(&gdk::RGBA::new(color.r, color.g, color.b, alpha), &bounds);
         s.pop();

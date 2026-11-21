@@ -1,6 +1,6 @@
 [package]
 name = "wisprcheap"
-version = "1.7.0"
+version = "1.8.0"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT"
@@ -54,6 +54,7 @@ winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
 tauri-winrt-notification = "0.8"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
     "Win32_System_Console",
     "Win32_System_LibraryLoader",

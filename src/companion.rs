@@ -26,7 +26,53 @@ pub enum FieldKind {
     Keys,
     Bool,
     LongText,
+    /// One of a fixed set of values, picked from a list.
+    Choice(&'static [Choice]),
 }
+
+/// A value a `FieldKind::Choice` setting can take, and how it's shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Choice {
+    pub value: &'static str,
+    pub label: &'static str,
+}
+
+impl Choice {
+    /// The choice `value` stands for, ignoring case and dashes like the config file does (`edge-glow`).
+    pub fn find(choices: &'static [Choice], value: &str) -> Option<Choice> {
+        let key = |s: &str| s.replace('-', "").to_ascii_lowercase();
+        let value = key(value.trim());
+        choices.iter().copied().find(|c| key(c.value) == value)
+    }
+}
+
+impl std::fmt::Display for Choice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label)
+    }
+}
+
+const OVERLAY_STYLES: &[Choice] = &[
+    Choice {
+        value: "pill",
+        label: "Pill (bottom of the screen)",
+    },
+    Choice {
+        value: "edgeGlow",
+        label: "Edge glow (around the active window)",
+    },
+];
+
+const PROVIDERS: &[Choice] = &[
+    Choice {
+        value: "elevenlabs",
+        label: "ElevenLabs",
+    },
+    Choice {
+        value: "openai",
+        label: "OpenAI (or a compatible endpoint)",
+    },
+];
 
 pub struct SettingSpec {
     pub path: &'static str,
@@ -37,8 +83,8 @@ pub struct SettingSpec {
 }
 
 macro_rules! fields {
-    ($(($section:literal, $path:literal, $label:literal, $kind:ident, $hint:literal)),* $(,)?) => {
-        pub const SETTINGS: &[SettingSpec] = &[$(SettingSpec { section: $section, path: $path, label: $label, kind: FieldKind::$kind, hint: $hint }),*];
+    ($(($section:literal, $path:literal, $label:literal, $kind:expr, $hint:literal)),* $(,)?) => {
+        pub const SETTINGS: &[SettingSpec] = &[$(SettingSpec { section: $section, path: $path, label: $label, kind: { use FieldKind::*; $kind }, hint: $hint }),*];
     };
 }
 
@@ -110,8 +156,8 @@ fields![
         "General",
         "overlay.style",
         "Overlay style",
-        Text,
-        "pill (bottom of the screen) or edgeGlow (glow at the bottom of the active window, Linux)"
+        Choice(OVERLAY_STYLES),
+        "The pill shows a waveform at the bottom of the screen; the edge glow lights up the bottom of the window you're dictating into"
     ),
     (
         "General",
@@ -173,8 +219,8 @@ fields![
         "Speech-to-text",
         "transcription.provider",
         "Provider",
-        Text,
-        "elevenlabs or openai (including compatible endpoints)"
+        Choice(PROVIDERS),
+        "Which speech-to-text service transcribes your recordings"
     ),
     (
         "Speech-to-text",
@@ -1068,6 +1114,33 @@ pub async fn request(args: ConfigArgs, request: Request) -> Reply {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn choices_are_values_the_config_accepts() {
+        use crate::config::{OverlayStyle, Provider};
+        for choice in OVERLAY_STYLES {
+            serde_yaml::from_str::<OverlayStyle>(choice.value).unwrap();
+        }
+        for choice in PROVIDERS {
+            serde_yaml::from_str::<Provider>(choice.value).unwrap();
+        }
+        // the config's spellings pick the same entry
+        assert_eq!(
+            Choice::find(OVERLAY_STYLES, "edge-glow").map(|c| c.value),
+            Some("edgeGlow")
+        );
+        assert_eq!(Choice::find(OVERLAY_STYLES, "${STYLE}"), None);
+        // every choice setting lists its default
+        let defaults = serde_json::to_value(crate::config::Config::default()).unwrap();
+        for spec in SETTINGS {
+            if let FieldKind::Choice(choices) = spec.kind {
+                let default = value_at(&defaults, spec.path)
+                    .and_then(Value::as_str)
+                    .unwrap();
+                assert!(Choice::find(choices, default).is_some(), "{}", spec.path);
+            }
+        }
+    }
 
     fn fixture() -> (tempfile::TempDir, ConfigArgs) {
         let dir = tempfile::tempdir().unwrap();

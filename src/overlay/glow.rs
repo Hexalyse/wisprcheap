@@ -2,8 +2,9 @@
 //! wisprcheap listens, and climbing its side edges. Blobs of light drift along the bottom, and the glow swells with
 //! the voice; it breathes while the audio is processed, and briefly takes the outcome's tint.
 //!
-//! This is the platform-independent part (what to show, its colors, brightness and motion); the GTK4 window
-//! places it over the active window and draws `GlowFrame`s with GSK gradients, on the GPU.
+//! This is the platform-independent part (what to show, its colors, brightness, motion and shape). The GTK4 window
+//! places it over the active window and draws `GlowFrame`s with GSK gradients, on the GPU; on Windows, layered
+//! windows show it drawn in software (`glow_paint`).
 
 use std::f32::consts::TAU;
 use std::time::{Duration, Instant};
@@ -23,6 +24,32 @@ const DRIFT: f32 = 0.35;
 const VOICE_SPEEDUP: f32 = 2.6;
 /// Breathing period while processing.
 const BREATHE_SECS: f32 = 1.6;
+
+/// The layers the band is drawn with, from wide and faint to thin and bright, so it's brightest right at the
+/// window's edges and fades inward: (thickness, color index, opacity, blur radius).
+pub(super) const LAYERS: [(f32, usize, f32, f32); 3] = [
+    (1.6, 1, 0.22, 12.0),
+    (0.75, 0, 0.25, 6.0),
+    (0.25, 2, 0.5, 2.0),
+];
+
+/// The band's base thickness, the height of its wave, and how far it climbs the sides of a window `h` tall
+/// (device-independent pixels): low, higher with the voice (`swell`).
+pub(super) fn shape(swell: f32, h: f32) -> (f32, f32, f32) {
+    (
+        10.0 + 10.0 * swell,
+        4.0 + 7.0 * swell,
+        (h * (0.3 + 0.08 * swell)).min(h),
+    )
+}
+
+/// The wave on the bottom edge at `x`: long, gentle swells travelling to the right as `t` advances.
+pub(super) fn wave(x: f32, t: f32, amplitude: f32) -> f32 {
+    amplitude
+        * (0.6 * (x / 95.0 - 1.6 * t).sin()
+            + 0.28 * (x / 48.0 - 2.3 * t + 1.7).sin()
+            + 0.12 * (x / 160.0 - 0.9 * t + 4.1).sin())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GlowLook {
