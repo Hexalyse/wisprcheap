@@ -271,8 +271,12 @@ async fn push(
                     results.push(rejected(c, "missing_payload"));
                     continue;
                 }
-                Some(p) if p.len() > MAX_PAYLOAD || !p.starts_with("e1.") => {
+                Some(p) if p.len() > MAX_PAYLOAD => {
                     results.push(rejected(c, "payload_too_large"));
+                    continue;
+                }
+                Some(p) if !p.starts_with("e1.") => {
+                    results.push(rejected(c, "invalid_payload"));
                     continue;
                 }
                 _ => {}

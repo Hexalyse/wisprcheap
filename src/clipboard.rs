@@ -3,13 +3,51 @@
 
 use std::sync::OnceLock;
 use std::sync::mpsc;
+use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use tokio::sync::oneshot;
 
+const RETRIES: usize = 5;
+const RETRY_DELAY: Duration = Duration::from_millis(15);
+
 enum Request {
     Read(oneshot::Sender<Result<String>>),
     Write(String, oneshot::Sender<Result<()>>),
+}
+
+fn read_with_retry(clipboard: &mut arboard::Clipboard) -> Result<String> {
+    let mut last_err = None;
+    for attempt in 0..RETRIES {
+        match clipboard.get_text() {
+            Ok(text) => return Ok(text),
+            // Non-text content (an image, files...) reads as empty text.
+            Err(arboard::Error::ContentNotAvailable) => return Ok(String::new()),
+            Err(e) => {
+                last_err = Some(e);
+                if attempt + 1 < RETRIES {
+                    std::thread::sleep(RETRY_DELAY);
+                }
+            }
+        }
+    }
+    Err(anyhow!("{}", last_err.unwrap()))
+}
+
+fn write_with_retry(clipboard: &mut arboard::Clipboard, text: &str) -> Result<()> {
+    let mut last_err = None;
+    for attempt in 0..RETRIES {
+        match clipboard.set_text(text.to_owned()) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                last_err = Some(e);
+                if attempt + 1 < RETRIES {
+                    std::thread::sleep(RETRY_DELAY);
+                }
+            }
+        }
+    }
+    Err(anyhow!("{}", last_err.unwrap()))
 }
 
 fn sender() -> &'static mpsc::Sender<Request> {
@@ -28,19 +66,14 @@ fn sender() -> &'static mpsc::Sender<Request> {
                         Request::Read(reply) => {
                             let result = match clipboard.as_mut() {
                                 None => Err(anyhow!("the clipboard is unavailable")),
-                                Some(c) => match c.get_text() {
-                                    Ok(text) => Ok(text),
-                                    // Non-text content (an image, files...) reads as empty text.
-                                    Err(arboard::Error::ContentNotAvailable) => Ok(String::new()),
-                                    Err(e) => Err(anyhow!("{e}")),
-                                },
+                                Some(c) => read_with_retry(c),
                             };
                             let _ = reply.send(result);
                         }
                         Request::Write(text, reply) => {
                             let result = match clipboard.as_mut() {
                                 None => Err(anyhow!("the clipboard is unavailable")),
-                                Some(c) => c.set_text(text).map_err(|e| anyhow!("{e}")),
+                                Some(c) => write_with_retry(c, &text),
                             };
                             let _ = reply.send(result);
                         }

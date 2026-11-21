@@ -248,17 +248,22 @@ async fn last_writer_wins_and_paging() {
         (Some("rejected"), Some("clock_skew"))
     );
 
+    let oversized = format!("e1.{}", "a".repeat(wisprcheap_server::api::MAX_PAYLOAD));
     let bad = json!({"changes": [
         {"kind": "nope", "id": "a", "hlc": hlc(now, "dev_a"), "payload": "e1.x"},
         {"kind": "setting", "id": "bad id!", "hlc": hlc(now, "dev_a"), "payload": "e1.x"},
         {"kind": "setting", "id": "a", "hlc": "yesterday", "payload": "e1.x"},
         {"kind": "setting", "id": "a", "hlc": hlc(now, "dev_a")},
         {"kind": "dict", "id": "abcdefghijklmnopqrstuv", "hlc": hlc(now, "dev_a"), "payload": "plain text"},
+        {"kind": "dict", "id": "abcdefghijklmnopqrstuv", "hlc": hlc(now, "dev_a"), "payload": oversized},
     ]});
     let (_, r) = t.api("POST", "/v1/changes", &phone, Some(bad)).await;
     let errors: Vec<_> =
         r["results"].as_array().unwrap().iter().map(|x| x["error"].as_str().unwrap().to_string()).collect();
-    assert_eq!(errors, ["invalid_kind", "invalid_id", "invalid_hlc", "missing_payload", "payload_too_large"]);
+    assert_eq!(
+        errors,
+        ["invalid_kind", "invalid_id", "invalid_hlc", "missing_payload", "invalid_payload", "payload_too_large"]
+    );
 
     // Two more records, then paging.
     let more = json!({"changes": [

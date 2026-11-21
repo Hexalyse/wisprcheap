@@ -391,6 +391,8 @@ pub struct HistoryConfig {
     /// Keep the audio of recordings whose transcription failed, so nothing is lost.
     pub save_failed_audio: bool,
     pub failed_audio_dir: String,
+    /// Write dictated/command text into `wisprcheap.log` (also suppressed when `enabled` is false).
+    pub log_dictated_text: bool,
 }
 
 impl Default for HistoryConfig {
@@ -400,6 +402,7 @@ impl Default for HistoryConfig {
             path: "history.jsonl".into(),
             save_failed_audio: true,
             failed_audio_dir: "recordings".into(),
+            log_dictated_text: true,
         }
     }
 }

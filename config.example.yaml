@@ -120,6 +120,7 @@ history:
   path: history.jsonl      # relative to this file
   saveFailedAudio: true    # keep the WAV when transcription fails
   failedAudioDir: recordings
+  logDictatedText: true    # write transcripts to wisprcheap.log (off automatically when history.enabled is false)
 
 # Prices of models the built-in table doesn't know (used for the cost estimates).
 # pricing:

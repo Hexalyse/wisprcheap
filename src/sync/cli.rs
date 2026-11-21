@@ -183,6 +183,7 @@ fn load(ctx: &SyncContext) -> Result<LoadedConfig> {
 
 /// Edits `sync.*` in the config file (created from the example when there's none).
 fn edit_config(loaded: &LoadedConfig, edit: impl FnOnce(&mut YamlText) -> Result<()>) -> Result<PathBuf> {
+    let _edit = crate::config::EDIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let file = ensure_config_file(loaded.config_path.as_deref())?;
     let text = std::fs::read_to_string(&file).map_err(|e| anyhow!("can't read {}: {e}", file.display()))?;
     let mut y = YamlText::new(text.clone());
@@ -255,23 +256,23 @@ pub async fn pair(
             ..Default::default()
         };
         st.save(&ctx.state_dir)?;
+        let has_history_mode = loaded
+            .config_path
+            .as_ref()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|t| YamlText::new(t).doc().ok())
+            .is_some_and(|doc| crate::yaml_edit::get(&doc, &["sync", "history"]).is_some());
+        edit_config(&loaded, |y| {
+            y.set(&["sync", "server"], &str_value(&server))?;
+            y.set(&["sync", "token"], &str_value(&paired.token))?;
+            y.set(&["sync", "key"], &str_value(&dk.export()))?;
+            y.set(&["sync", "deviceName"], &str_value(&me.device.name))?;
+            if !has_history_mode {
+                y.set(&["sync", "history"], &str_value("upload"))?;
+            }
+            Ok(())
+        })?;
     }
-    let has_history_mode = loaded
-        .config_path
-        .as_ref()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|t| YamlText::new(t).doc().ok())
-        .is_some_and(|doc| crate::yaml_edit::get(&doc, &["sync", "history"]).is_some());
-    edit_config(&loaded, |y| {
-        y.set(&["sync", "server"], &str_value(&server))?;
-        y.set(&["sync", "token"], &str_value(&paired.token))?;
-        y.set(&["sync", "key"], &str_value(&dk.export()))?;
-        y.set(&["sync", "deviceName"], &str_value(&me.device.name))?;
-        if !has_history_mode {
-            y.set(&["sync", "history"], &str_value("upload"))?;
-        }
-        Ok(())
-    })?;
     let first_sync = sync_once(ctx).await;
     Ok(PairReport {
         username: me.user.username,
@@ -302,6 +303,7 @@ pub async fn unlock(ctx: &SyncContext, kdf: &KdfParams, ask: Ask<'_>) -> Result<
         println!("The encryption key of this device is already up to date.");
     } else {
         let (dk, _) = setup_key(&api, &me, ask, kdf).await?;
+        let _lock = StateLock::acquire(&ctx.state_dir).await?;
         edit_config(&loaded, |y| y.set(&["sync", "key"], &str_value(&dk.export())))?;
     }
     Ok(sync_once(ctx).await)
@@ -340,11 +342,11 @@ pub async fn unpair(ctx: &SyncContext) -> Result<()> {
             Err(e) => eprintln!("Warning: couldn't tell the server ({e}). Remove the device from the server's web page."),
         }
     }
+    let _lock = StateLock::acquire(&ctx.state_dir).await?;
     edit_config(&loaded, |y| {
         y.remove(&["sync", "token"])?;
         y.remove(&["sync", "key"])
     })?;
-    let _lock = StateLock::acquire(&ctx.state_dir).await?;
     let _ = std::fs::remove_file(ctx.state_dir.join("state.json"));
     Ok(())
 }
@@ -357,6 +359,7 @@ pub async fn rename(ctx: &SyncContext, name: &str) -> Result<()> {
     let loaded = load(ctx)?;
     let api = connected(&loaded)?;
     api.rename(name).await.map_err(api_error)?;
+    let _lock = StateLock::acquire(&ctx.state_dir).await?;
     edit_config(&loaded, |y| y.set(&["sync", "deviceName"], &str_value(name)))?;
     Ok(())
 }

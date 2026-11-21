@@ -152,13 +152,11 @@ pub fn capture_escape(on: bool) {
     crate::hyprland::set_escape_bind(on);
 }
 
-pub fn tap_ctrl(letter: Letter, shift: bool) {
+pub fn tap_ctrl(letter: Letter, shift: bool) -> anyhow::Result<()> {
     match INJECTOR.get() {
-        Some(Some(injector)) => {
-            if let Err(e) = injector.tap_ctrl(letter, shift) {
-                crate::warn!("[output] could not send a key: {e}");
-            }
-        }
+        Some(Some(injector)) => injector
+            .tap_ctrl(letter, shift)
+            .map_err(|e| anyhow::anyhow!("could not send a key: {e}")),
         _ => x11::tap_ctrl(letter, shift),
     }
 }

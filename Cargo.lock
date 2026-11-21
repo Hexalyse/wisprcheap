@@ -6530,7 +6530,7 @@ dependencies = [
 
 [[package]]
 name = "wisprcheap"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -6568,7 +6568,7 @@ dependencies = [
 
 [[package]]
 name = "wisprcheap-server"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "argon2",
@@ -6613,7 +6613,7 @@ dependencies = [
 
 [[package]]
 name = "wisprcheap-ui"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "chrono",
  "iced",

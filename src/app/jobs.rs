@@ -14,7 +14,7 @@ use crate::history::{
     Delivered, HistoryEntry, PolishInfo, TranscriptionInfo, count_words, iso_timestamp,
 };
 use crate::llm::is_network_error;
-use crate::output::{Selection, capture_selection, deliver, restore_clipboard};
+use crate::output::{capture_selection, deliver, restore_clipboard};
 use crate::overlay::Feedback;
 use crate::pricing::{llm_cost_with, transcription_cost_with};
 use crate::sounds::Cue;
@@ -306,10 +306,12 @@ pub async fn process_dictation(sh: &Arc<Shared>, pcm: Arc<Vec<i16>>, retry: bool
     if retry {
         sh.play(Cue::Added);
     }
-    if text != raw {
-        say!("  raw:  {raw}");
+    if p.config.history.enabled && p.config.history.log_dictated_text {
+        if text != raw {
+            say!("  raw:  {raw}");
+        }
+        say!("  text: {text}");
     }
-    say!("  text: {text}");
 }
 
 /// Command mode: copy the selection, transcribe the spoken instruction, let the LLM rewrite or write, paste.
@@ -333,10 +335,29 @@ pub async fn process_command(sh: &Arc<Shared>, pcm: Arc<Vec<i16>>) {
     let selection_task =
         tokio::spawn(async move { capture_selection(&hotkey, &terminal_apps).await });
     let transcribed = transcribe(&p, &pcm, &mut entry, None).await;
-    let selection = selection_task.await.unwrap_or(Selection {
-        text: None,
-        previous: None,
-    });
+    let selection = match selection_task.await {
+        Ok(Ok(selection)) => selection,
+        Ok(Err(e)) => {
+            let message = e.to_string();
+            entry.error = Some(message.clone());
+            sh.record(&p, &entry);
+            sh.play(Cue::Error);
+            sh.overlay_feedback(Feedback::Error);
+            error!("Command aborted: {message}");
+            sh.notify_error("Command failed", &message);
+            return;
+        }
+        Err(e) => {
+            let message = format!("could not capture the selection: {e}");
+            entry.error = Some(message.clone());
+            sh.record(&p, &entry);
+            sh.play(Cue::Error);
+            sh.overlay_feedback(Feedback::Error);
+            error!("Command aborted: {message}");
+            sh.notify_error("Command failed", &message);
+            return;
+        }
+    };
     let instruction = match transcribed {
         Ok(i) => i,
         Err(e) => {
@@ -425,16 +446,18 @@ pub async fn process_command(sh: &Arc<Shared>, pcm: Arc<Vec<i16>>) {
         "result copied".to_string()
     };
     info!("Command {what} ({})", timing_summary(&entry, "llm"));
-    say!("  instruction: {instruction}");
-    let result = if text.encode_utf16().count() > 300 {
-        format!(
-            "{}...",
-            String::from_utf16_lossy(&text.encode_utf16().take(300).collect::<Vec<_>>())
-        )
-    } else {
-        text.clone()
-    };
-    say!("  result:      {result}");
+    if p.config.history.enabled && p.config.history.log_dictated_text {
+        say!("  instruction: {instruction}");
+        let result = if text.encode_utf16().count() > 300 {
+            format!(
+                "{}...",
+                String::from_utf16_lossy(&text.encode_utf16().take(300).collect::<Vec<_>>())
+            )
+        } else {
+            text.clone()
+        };
+        say!("  result:      {result}");
+    }
 }
 
 /// Add the selected text (shortcut) or the clipboard content (tray) to the dictionary in config.yaml.
@@ -442,9 +465,18 @@ pub async fn add_word(sh: &Arc<Shared>, source: AddWordSource) {
     let text = match source {
         AddWordSource::Selection => {
             let terminal_apps = sh.pipeline().config.output.terminal_apps.clone();
-            let selection = capture_selection(&sh.hotkey, &terminal_apps).await;
-            restore_clipboard(selection.previous.as_deref()).await;
-            selection.text
+            match capture_selection(&sh.hotkey, &terminal_apps).await {
+                Ok(selection) => {
+                    restore_clipboard(selection.previous.as_deref()).await;
+                    selection.text
+                }
+                Err(e) => {
+                    error!("Could not capture the selection for the dictionary: {e}");
+                    sh.play(Cue::Error);
+                    sh.notify_error("Not added to the dictionary", &e.to_string());
+                    return;
+                }
+            }
         }
         AddWordSource::Clipboard => clipboard::read().await.ok(),
     };

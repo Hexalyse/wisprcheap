@@ -237,7 +237,7 @@ fn key_input(vk: u16, up: bool) -> INPUT {
     }
 }
 
-pub fn tap_ctrl(letter: Letter) {
+pub fn tap_ctrl(letter: Letter) -> anyhow::Result<()> {
     let vk = match letter {
         Letter::C => b'C' as u16,
         Letter::V => b'V' as u16,
@@ -249,11 +249,16 @@ pub fn tap_ctrl(letter: Letter) {
         key_input(vk, true),
         key_input(VK_LCONTROL, true),
     ];
-    unsafe {
+    let sent = unsafe {
         SendInput(
             inputs.len() as u32,
             inputs.as_ptr(),
             std::mem::size_of::<INPUT>() as i32,
-        );
+        )
+    };
+    if sent != inputs.len() as u32 {
+        let err = std::io::Error::last_os_error();
+        anyhow::bail!("SendInput sent {sent}/{} key events: {err}", inputs.len());
     }
+    Ok(())
 }

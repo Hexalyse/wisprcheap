@@ -4,7 +4,6 @@
 
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -84,12 +83,8 @@ impl SyncState {
     pub fn save(&self, dir: &Path) -> Result<()> {
         std::fs::create_dir_all(dir)?;
         let file = dir.join(STATE_FILE);
-        let tmp = dir.join(format!("{STATE_FILE}.tmp"));
-        let mut output = File::create(&tmp)?;
-        output.write_all(&serde_json::to_vec_pretty(self)?)?;
-        output.sync_all()?;
-        drop(output);
-        std::fs::rename(&tmp, &file).map_err(|e| anyhow!("can't write {}: {e}", file.display()))
+        crate::private_file::write(&file, serde_json::to_vec_pretty(self)?)
+            .map_err(|e| anyhow!("can't write {}: {e}", file.display()))
     }
 
     /// Forget everything synced (new data key): the next sync is a first sync again.

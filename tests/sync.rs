@@ -444,6 +444,31 @@ async fn scenario() {
     assert_eq!(b.loaded().config.polish.model, "repaired");
     assert_ne!(wisprcheap::sync::state::SyncState::load(&b.ctx.state_dir).last_sync.as_deref(), Some(previous_success));
 
+    // --- Temporary clock skew keeps both profile and history pending and recovers once the clock is fixed.
+    let skew_entry_id = "c2c4d9f1-8a3b-4c6e-9f1a-3b5c7d9e1f2a";
+    let mut skew_entry = entry(Some(skew_entry_id), 8);
+    skew_entry = skew_entry.replacen("{", "{\"audioFile\":\"C:/Users/alice/recordings/failed.wav\",", 1);
+    std::fs::write(a.dir.join("history.jsonl"), format!("{}{skew_entry}", a.text("history.jsonl"))).unwrap();
+    a.edit(|y| y.set(&["polish", "model"], &serde_yaml::Value::String("skew-recovered".into())).unwrap());
+    let fast_ms = || chrono::Utc::now().timestamp_millis() as u64 + 3_600_000;
+    let skewed = wisprcheap::sync::engine::sync_once_with_clock(&a.ctx, &fast_ms).await.unwrap();
+    assert_eq!(skewed.uploaded, 0);
+    assert!(skewed.pending >= 2, "both setting and history must stay pending: {skewed:?}");
+    let recovered = sync_once(&a.ctx).await.unwrap();
+    assert_eq!(recovered.pending, 0, "{recovered:?}");
+    assert_eq!(recovered.uploaded, 1);
+    assert_eq!(recovered.pushed.get("setting"), Some(&1));
+    // Re-syncing uploads the entry exactly once (no duplicates).
+    let repeat = sync_once(&a.ctx).await.unwrap();
+    assert_eq!(repeat.uploaded, 0);
+    assert_eq!(repeat.pending, 0);
+    // B receives the setting and the history entry without the originating device's audioFile path.
+    sync_once(&b.ctx).await.unwrap();
+    assert_eq!(b.loaded().config.polish.model, "skew-recovered");
+    let b_hist = b.text("history.jsonl");
+    assert_eq!(b_hist.matches(skew_entry_id).count(), 1);
+    assert!(!b_hist.contains("audioFile"), "audioFile must be stripped from synced history:\n{b_hist}");
+
     // --- Unpairing B: the token is revoked and removed, the data stays.
     cli::unpair(&b.ctx).await.unwrap();
     let b_text = b.text("config.yaml");

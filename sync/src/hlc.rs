@@ -82,6 +82,20 @@ impl Clock {
         }
     }
 
+    /// Resets the clock back to a known-good timestamp (or zero) after recovering from a fast local clock.
+    pub fn reset(&mut self, to: Option<&Hlc>) {
+        match to {
+            Some(h) => {
+                self.ms = h.ms;
+                self.counter = h.counter;
+            }
+            None => {
+                self.ms = 0;
+                self.counter = 0;
+            }
+        }
+    }
+
     pub fn last(&self) -> Hlc {
         Hlc { ms: self.ms, counter: self.counter, node: self.node.clone() }
     }

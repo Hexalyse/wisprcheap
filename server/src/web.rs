@@ -128,12 +128,23 @@ fn forbidden(message: &str) -> Response {
     (StatusCode::FORBIDDEN, message.to_string()).into_response()
 }
 
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (&x, &y) in a.iter().zip(b) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 /// Origin + CSRF check for a logged-in POST.
 fn check_form(state: &crate::AppState, headers: &HeaderMap, session: &Session, csrf: &str) -> Option<Response> {
     if !same_origin(state, headers) {
         return Some(forbidden("Cross-site request refused. Open the server at its public URL."));
     }
-    if csrf != session.csrf {
+    if !ct_eq(csrf.as_bytes(), session.csrf.as_bytes()) {
         return Some(forbidden("Expired form: go back, reload the page and try again."));
     }
     None
@@ -366,8 +377,9 @@ async fn setup_token_valid(state: &SharedState, token: &str) -> anyhow::Result<b
     state
         .blocking(move |state| -> anyhow::Result<_> {
             let conn = state.db.lock();
+            let expected = b64(&sha256(token.as_bytes()));
             Ok(db::user_count(&conn)? == 0
-                && db::meta_get(&conn, SETUP_KEY)?.is_some_and(|h| h == b64(&sha256(token.as_bytes()))))
+                && db::meta_get(&conn, SETUP_KEY)?.is_some_and(|h| ct_eq(h.as_bytes(), expected.as_bytes())))
         })
         .await?
 }
@@ -447,8 +459,9 @@ async fn setup(
     state
         .blocking(move |state| -> WebResult {
             let conn = state.db.lock();
+            let expected = b64(&sha256(token.as_bytes()));
             if db::user_count(&conn)? != 0
-                || db::meta_get(&conn, SETUP_KEY)?.as_deref() != Some(b64(&sha256(token.as_bytes())).as_str())
+                || !db::meta_get(&conn, SETUP_KEY)?.is_some_and(|h| ct_eq(h.as_bytes(), expected.as_bytes()))
             {
                 return message(
                     None,

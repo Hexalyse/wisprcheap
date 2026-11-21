@@ -154,7 +154,7 @@ Push statuses:
 - `stale` → the server has a newer HLC, and `current` is its record (apply it);
 - `exists` → history entry already stored;
 - `rejected` → invalid, with `error`: `invalid_kind`, `invalid_id`, `invalid_hlc`, `clock_skew`,
-  `payload_too_large`, `invalid_stats`, `missing_payload`.
+  `payload_too_large`, `invalid_payload`, `invalid_stats`, `missing_payload`.
 
 Limits: request bodies and pull responses ≤ 1 MiB, payloads ≤ 64 KiB, HLC strings ≤ 128 bytes, 120 requests per minute per token
 (`429 rate_limited`).

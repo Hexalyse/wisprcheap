@@ -495,6 +495,13 @@ fields![
         Text,
         "Relative to your config folder, or an absolute path"
     ),
+    (
+        "Output & privacy",
+        "history.logDictatedText",
+        "Write dictated text in the log",
+        Bool,
+        "Also disabled automatically when dictation history is off"
+    ),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

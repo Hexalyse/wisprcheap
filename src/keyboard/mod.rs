@@ -53,13 +53,15 @@ impl Hook {
 }
 
 /// Press and release Ctrl+`letter` in the focused application, or Ctrl+Shift+`letter` (terminals).
-pub fn tap_ctrl(letter: Letter, shift: bool) {
+pub fn tap_ctrl(letter: Letter, shift: bool) -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
-    imp::tap_ctrl(letter, shift);
+    {
+        imp::tap_ctrl(letter, shift)
+    }
     #[cfg(not(target_os = "linux"))]
     {
         let _ = shift; // Windows terminals paste with Ctrl+V
-        imp::tap_ctrl(letter);
+        imp::tap_ctrl(letter)
     }
 }
 

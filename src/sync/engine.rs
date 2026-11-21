@@ -20,6 +20,7 @@ use crate::sync::state::{Snap, StateLock, SyncState, record_key, split_key};
 
 const PAGE: usize = 500;
 const MAX_PAYLOAD: usize = 64 * 1024;
+const MAX_CLOCK_SKEW_MS: u64 = 10 * 60 * 1000;
 
 /// Where a sync run reads its config and keeps its state.
 #[derive(Debug, Clone)]
@@ -162,6 +163,20 @@ fn is_set_kind(kind: &str) -> bool {
     matches!(kind, KIND_DICT | KIND_PAIR | KIND_PRICE)
 }
 
+fn parse_server_ms(server_time: &str) -> Option<u64> {
+    chrono::DateTime::parse_from_rfc3339(server_time)
+        .ok()
+        .and_then(|dt| u64::try_from(dt.timestamp_millis()).ok())
+}
+
+fn max_valid_hlc(st: &SyncState, max_ms: u64) -> Option<Hlc> {
+    st.snapshot
+        .values()
+        .filter_map(|s| Hlc::parse(&s.hlc))
+        .filter(|h| h.ms <= max_ms)
+        .max()
+}
+
 /// Compares the local profile with the snapshot: every difference is a local edit, queued with a
 /// fresh HLC. Returns the number of changes queued.
 fn diff_local(
@@ -169,6 +184,7 @@ fn diff_local(
     dk: &DataKey,
     st: &mut SyncState,
     clock: &mut Clock,
+    wall_ms: &(dyn Fn() -> u64 + Send + Sync),
     skip: &HashSet<String>,
 ) -> usize {
     let local = local::profile(loaded, dk);
@@ -183,7 +199,7 @@ fn diff_local(
         if st.snapshot.get(key).is_some_and(|s| !s.deleted && s.hash == hash) {
             continue;
         }
-        let hlc = clock.now(now_ms()).to_string();
+        let hlc = clock.now(wall_ms()).to_string();
         let payload = dk.encrypt_record(&st.user_id, rec.kind, &rec.id, &rec.value);
         st.queue(Change {
             seq: None,
@@ -213,7 +229,7 @@ fn diff_local(
         let Some((kind, id)) = split_key(&key) else {
             continue;
         };
-        let hlc = clock.now(now_ms()).to_string();
+        let hlc = clock.now(wall_ms()).to_string();
         st.queue(Change {
             seq: None,
             kind: kind.to_string(),
@@ -236,6 +252,14 @@ fn load(args: &ConfigArgs) -> Result<LoadedConfig, SyncError> {
 
 /// One complete sync. Holds the state lock for its whole duration.
 pub async fn sync_once(ctx: &SyncContext) -> Result<SyncOutcome, SyncError> {
+    sync_once_with_clock(ctx, &now_ms).await
+}
+
+/// One complete sync using a custom wall-clock millisecond source (for deterministic clock-skew tests).
+pub async fn sync_once_with_clock(
+    ctx: &SyncContext,
+    wall_ms: &(dyn Fn() -> u64 + Send + Sync),
+) -> Result<SyncOutcome, SyncError> {
     let _lock = StateLock::acquire(&ctx.state_dir).await.map_err(local_err)?;
     let loaded = load(&ctx.config_args)?;
     let sc = loaded.config.sync.clone();
@@ -261,12 +285,18 @@ pub async fn sync_once(ctx: &SyncContext) -> Result<SyncOutcome, SyncError> {
         client: Client::new(&server, &sc.token),
         dk,
         clock: Clock::new(if st.device_id.is_empty() { "dev_unknown".to_string() } else { st.device_id.clone() }),
+        wall_ms,
+        server_ms: None,
+        max_remote_hlc: None,
         out: SyncOutcome::default(),
     };
     if let Some(h) = Hlc::parse(&st.hlc) {
         run.clock.observe(&h);
     }
     let result = run.run(&mut st, loaded).await;
+    // Never persist a poisoned future HLC past the server's clock-skew window, or fixing the local
+    // clock won't recover subsequent syncs.
+    run.clamp_clock_to_server(&st);
     st.hlc = run.clock.last().to_string();
     st.save(&ctx.state_dir).map_err(local_err)?;
     result.map(|()| run.out)
@@ -277,10 +307,37 @@ struct Run<'a> {
     client: Client,
     dk: DataKey,
     clock: Clock,
+    wall_ms: &'a (dyn Fn() -> u64 + Send + Sync),
+    server_ms: Option<u64>,
+    max_remote_hlc: Option<Hlc>,
     out: SyncOutcome,
 }
 
 impl Run<'_> {
+    fn observe_remote(&mut self, h: &Hlc) {
+        self.clock.observe(h);
+        let valid = self
+            .server_ms
+            .is_none_or(|s| h.ms <= s.saturating_add(MAX_CLOCK_SKEW_MS));
+        if valid && self.max_remote_hlc.as_ref().is_none_or(|cur| h > cur) {
+            self.max_remote_hlc = Some(h.clone());
+        }
+    }
+
+    fn clamp_clock_to_server(&mut self, st: &SyncState) {
+        let Some(s_ms) = self.server_ms else {
+            return;
+        };
+        let limit = s_ms.saturating_add(MAX_CLOCK_SKEW_MS);
+        if self.clock.last().ms > limit {
+            let safe = [max_valid_hlc(st, limit), self.max_remote_hlc.clone()]
+                .into_iter()
+                .flatten()
+                .max();
+            self.clock.reset(safe.as_ref());
+        }
+    }
+
     async fn run(&mut self, st: &mut SyncState, loaded: LoadedConfig) -> Result<(), SyncError> {
         let sc = loaded.config.sync.clone();
         // 0. Local edits since the last sync, before any network call (so an edit made offline gets
@@ -289,11 +346,12 @@ impl Run<'_> {
             |st: &SyncState| -> HashSet<String> { st.pending.iter().map(|c| record_key(&c.kind, &c.id)).collect() };
         if st.initialized && !st.device_id.is_empty() {
             let skip = pending_keys(st);
-            diff_local(&loaded, &self.dk, st, &mut self.clock, &skip);
+            diff_local(&loaded, &self.dk, st, &mut self.clock, self.wall_ms, &skip);
             st.save(&self.ctx.state_dir).map_err(local_err)?;
         }
 
         let me = self.client.me().await?;
+        self.server_ms = parse_server_ms(&me.server_time);
         if st.device_id != me.device.id || st.user_id != me.user.id {
             // Paired again (or another account): start over.
             let (server, key_id) = (st.server.clone(), st.key_id.clone());
@@ -301,6 +359,28 @@ impl Run<'_> {
             st.device_id = me.device.id.clone();
             st.user_id = me.user.id.clone();
             self.clock = Clock::new(me.device.id.clone());
+        }
+        // Recover from a previously poisoned future HLC once the local clock is back within skew.
+        if let Some(s_ms) = self.server_ms {
+            let limit = s_ms.saturating_add(MAX_CLOCK_SKEW_MS);
+            if self.clock.last().ms > limit {
+                self.clamp_clock_to_server(st);
+                let current_wall = (self.wall_ms)();
+                if current_wall <= limit {
+                    for change in &mut st.outbox {
+                        if Hlc::parse(&change.hlc).is_some_and(|h| h.ms > limit) {
+                            let fresh = self.clock.now(current_wall).to_string();
+                            let key = record_key(&change.kind, &change.id);
+                            if let Some(snap) = st.snapshot.get_mut(&key)
+                                && snap.hlc == change.hlc
+                            {
+                                snap.hlc = fresh.clone();
+                            }
+                            change.hlc = fresh;
+                        }
+                    }
+                }
+            }
         }
         st.username = me.user.username.clone();
         st.device_name = me.device.name.clone();
@@ -339,7 +419,7 @@ impl Run<'_> {
             let page = self.client.pull(st.cursor, PAGE, !download).await?;
             for c in page.changes {
                 if let Some(h) = Hlc::parse(&c.hlc) {
-                    self.clock.observe(&h);
+                    self.observe_remote(&h);
                 }
                 if c.kind == KIND_HISTORY {
                     if download && !c.deleted && c.device.as_deref() != Some(st.device_id.as_str()) {
@@ -397,11 +477,12 @@ impl Run<'_> {
         // 5. Local changes after the merge: on the first sync, what the server didn't have; later,
         //    values the write-back normalised.
         let skip = pending_keys(st);
-        diff_local(&loaded, &self.dk, st, &mut self.clock, &skip);
+        diff_local(&loaded, &self.dk, st, &mut self.clock, self.wall_ms, &skip);
         st.save(&self.ctx.state_dir).map_err(local_err)?;
 
         // 6. Push.
         let mut saw_stale = false;
+        let mut clock_skew_pending = 0usize;
         while !st.outbox.is_empty() {
             let candidates: Vec<Change> = st
                 .outbox
@@ -429,7 +510,7 @@ impl Run<'_> {
                     PushStatus::Stale => {
                         if let Some(cur) = r.current {
                             if let Some(h) = Hlc::parse(&cur.hlc) {
-                                self.clock.observe(&h);
+                                self.observe_remote(&h);
                             }
                             st.pending.push(cur);
                             saw_stale = true;
@@ -441,6 +522,7 @@ impl Run<'_> {
                         if error == "clock_skew" {
                             // Retry once the clock is right.
                             st.snapshot.remove(&key);
+                            clock_skew_pending += 1;
                             self.warn("the server refused a change because this computer's clock is ahead; check the date and time".into());
                         } else {
                             self.warn(format!("the server refused {key}: {error}"));
@@ -463,7 +545,9 @@ impl Run<'_> {
         // 7-8. History.
         if history_on {
             let file = crate::paths::resolve(&loaded.base_dir, &loaded.config.history.path);
-            self.out.uploaded = self.upload_history(st, &file).await?;
+            let (uploaded, retryable) = self.upload_history(st, &file).await?;
+            self.out.uploaded = uploaded;
+            clock_skew_pending += retryable;
         }
 
         // 9. This month's totals, every device.
@@ -479,10 +563,11 @@ impl Run<'_> {
         }
 
         st.initialized = true;
-        self.out.pending = st.pending.len() + st.history_inbox.len() + st.outbox.len();
+        self.out.pending = st.pending.len() + st.history_inbox.len() + st.outbox.len() + clock_skew_pending;
         if self.out.pending == 0 {
             st.last_sync = Some(crate::history::iso_timestamp(chrono::Utc::now()));
         }
+        self.clamp_clock_to_server(st);
         st.save(&self.ctx.state_dir).map_err(local_err)?;
         if me.capabilities.sync_report {
             let report = SyncReportRequest {
@@ -617,6 +702,8 @@ impl Run<'_> {
             .unwrap_or_else(|| legacy_entry_id(&st.device_id, &ts));
         obj.insert("id".into(), Value::String(id.clone()));
         obj.insert("device".into(), Value::String(st.device_id.clone()));
+        // Local recording paths are device-specific and meaningless on other devices.
+        obj.remove("audioFile");
         let stats = HistoryStats::from_entry(&entry)?;
         if let Err(e) = stats.validate() {
             self.warn(format!("history entry {ts} not uploaded: {e}"));
@@ -631,7 +718,7 @@ impl Run<'_> {
             seq: None,
             kind: KIND_HISTORY.into(),
             id,
-            hlc: self.clock.now(now_ms()).to_string(),
+            hlc: self.clock.now((self.wall_ms)()).to_string(),
             deleted: false,
             payload: Some(payload),
             device: None,
@@ -639,26 +726,37 @@ impl Run<'_> {
         })
     }
 
-    async fn push_history(&mut self, batch: &[Change]) -> Result<usize, SyncError> {
+    async fn push_history(&mut self, batch: &[Change]) -> Result<(usize, usize), SyncError> {
         if batch.is_empty() {
-            return Ok(0);
+            return Ok((0, 0));
         }
         let resp = self.client.push(batch).await?;
-        let mut n = 0;
+        let mut applied = 0;
+        let mut retryable = 0;
         for r in resp.results {
             match r.status {
-                PushStatus::Applied => n += 1,
+                PushStatus::Applied => applied += 1,
                 PushStatus::Exists | PushStatus::Stale => {}
                 PushStatus::Rejected => {
-                    self.warn(format!("history entry {} refused: {}", r.id, r.error.unwrap_or_default()))
+                    let error = r.error.unwrap_or_default();
+                    if error == "clock_skew" {
+                        retryable += 1;
+                        self.warn(format!(
+                            "history entry {} refused because this computer's clock is ahead; check the date and time",
+                            r.id
+                        ));
+                    } else {
+                        self.warn(format!("history entry {} refused: {error}", r.id));
+                    }
                 }
             }
         }
-        Ok(n)
+        Ok((applied, retryable))
     }
 
     /// Uploads the entries appended to `history.jsonl` since the last sync.
-    async fn upload_history(&mut self, st: &mut SyncState, file: &Path) -> Result<usize, SyncError> {
+    /// Returns `(uploaded, retryable_pending)`.
+    async fn upload_history(&mut self, st: &mut SyncState, file: &Path) -> Result<(usize, usize), SyncError> {
         let name = file.to_string_lossy().into_owned();
         if st.history_file != name {
             st.history_file = name;
@@ -666,14 +764,14 @@ impl Run<'_> {
         }
         let bytes = match std::fs::read(file) {
             Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((0, 0)),
             Err(e) => return Err(local_err(format!("can't read {}: {e}", file.display()))),
         };
         if bytes.len() as u64 > st.history_offset {
         } else if (bytes.len() as u64) < st.history_offset {
             st.history_offset = 0; // the file was replaced
         } else {
-            return Ok(0);
+            return Ok((0, 0));
         }
         let start = st.history_offset as usize;
         let rest = &bytes[start..];
@@ -690,7 +788,12 @@ impl Run<'_> {
             if let Some(change) = self.history_change(st, line) {
                 let change_bytes = serde_json::to_vec(&change).map_err(local_err)?.len() + 1;
                 if !batch.is_empty() && batch_bytes + change_bytes > wisprcheap_sync::protocol::TARGET_PUSH_BYTES {
-                    uploaded += self.push_history(&batch).await?;
+                    let (n, retryable) = self.push_history(&batch).await?;
+                    uploaded += n;
+                    if retryable > 0 {
+                        // Keep st.history_offset at the start of this batch so it retries once the clock is fixed.
+                        return Ok((uploaded, retryable));
+                    }
                     batch.clear();
                     batch_bytes = 0;
                     st.history_offset = (pos - line.len()) as u64;
@@ -699,15 +802,23 @@ impl Run<'_> {
                 batch.push(change);
             }
             if batch.len() >= 200 || batch_bytes > 600_000 {
-                uploaded += self.push_history(&batch).await?;
+                let (n, retryable) = self.push_history(&batch).await?;
+                uploaded += n;
+                if retryable > 0 {
+                    return Ok((uploaded, retryable));
+                }
                 batch.clear();
                 batch_bytes = 0;
                 st.history_offset = pos as u64;
             }
         }
-        uploaded += self.push_history(&batch).await?;
+        let (n, retryable) = self.push_history(&batch).await?;
+        uploaded += n;
+        if retryable > 0 {
+            return Ok((uploaded, retryable));
+        }
         st.history_offset = (start + complete) as u64;
-        Ok(uploaded)
+        Ok((uploaded, 0))
     }
 
     /// Appends the other devices' entries to `history.jsonl` (`sync.history: download`).
@@ -756,6 +867,7 @@ impl Run<'_> {
                 if let Some(d) = &c.device {
                     obj.entry("device").or_insert_with(|| Value::String(d.clone()));
                 }
+                obj.remove("audioFile");
             }
             text.push_str(&entry.to_string());
             text.push('\n');
@@ -769,7 +881,7 @@ impl Run<'_> {
             if let Some(dir) = file.parent() {
                 std::fs::create_dir_all(dir)?;
             }
-            let mut f = std::fs::OpenOptions::new().create(true).append(true).open(file)?;
+            let mut f = crate::private_file::append(file)?;
             f.write_all(text.as_bytes())?;
             f.sync_data()
         })();
